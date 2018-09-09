@@ -1,4 +1,4 @@
-# cpparcoder
+# cpprcoder
 An implementaion of adaptive range coder for C++
 
 # Benchmarks
