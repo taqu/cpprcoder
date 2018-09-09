@@ -12,7 +12,7 @@ An implementaion of adaptive range coder for C++
 - [The Canterbury Corpus](http://corpus.canterbury.ac.nz/index.html)
 ## Result table
 ### Adaptive Range Coder
-|Name|Ratio|Compression (nano seconds)|Decompression (nano seconds)|
+|Name|Ratio|Compression (ns)|Decompression (ns)|
 |:---|:---|:---|:---|
 |alice29.txt|0.573000|5587|7150|
 |asyoulik.txt|0.603400|3769|5472|
@@ -27,7 +27,7 @@ An implementaion of adaptive range coder for C++
 |xargs.1|0.648924|129|188|
 
 ### zlib
-|Name|Ratio|Compression (nano seconds)|Decompression (nano seconds)|
+|Name|Ratio|Compression (ns)|Decompression (ns)|
 |:---|:---|:---|:---|
 |alice29.txt|0.357712|7935|8979|
 |asyoulik.txt|0.390617|6997|7856|
@@ -42,7 +42,7 @@ An implementaion of adaptive range coder for C++
 |xargs.1|0.410693|167|209|
 
 ### LZ4
-|Name|Ratio|Compression (nano seconds)|Decompression (nano seconds)|
+|Name|Ratio|Compression (ns)|Decompression (ns)|
 |:---|:---|:---|:---|
 |alice29.txt|0.583205|477|564|
 |asyoulik.txt|0.636313|365|433|
