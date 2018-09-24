@@ -56,5 +56,15 @@ An implementaion of adaptive range coder for C++
 |sum|0.491946|88|112|
 |xargs.1|0.628815|13|15|
 
+# Building
+For Visual Studio 15 2017,
+```
+git clone https://github.com/taqu/cpprcoder.git
+cd cpprcoder/test
+mkdir build_simd
+pushd build_simd
+cmake -G"Visual Studio 15 2017 Win64" -DUSE_SIMD=1 ..
+```
+
 # License
 This is free and unencumbered software released into the public domain.

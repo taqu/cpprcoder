@@ -117,7 +117,6 @@ namespace cpprcoder
 #define CPPRCODER_USE_SSE2 (1)
 #endif
 
-
     enum Status
     {
         Status_Success = 0,
@@ -684,6 +683,7 @@ namespace cpprcoder
             frequencies_[i] = 1;
         }
 
+        prefix_[0] = CHUNK_SIZE;
         for(s32 i=1; i<CHUNKS; ++i){
             prefix_[i] = prefix_[i-1] + CHUNK_SIZE;
         }

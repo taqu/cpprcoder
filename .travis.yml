@@ -25,7 +25,7 @@ before_script:
   - tar jxvf cantrbry.tar.bz2
   - mkdir build
   - cd build
-  - cmake ..
+  - cmake .. -DUSE_SIMD=1
 script:
   - make
   - ./TestRangeCoder
