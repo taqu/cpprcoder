@@ -57,13 +57,21 @@ An implementaion of adaptive range coder for C++
 |xargs.1|0.628815|13|15|
 
 # Building
-For Visual Studio 15 2017,
+First, make sure you clone this repository.  
+Then, deflate cantrbry.tar.bz2. 
+If you work on Windows, you're going to need to deflate zlib.tar.bz2 and lz4.tar.bz2.
+
 ```
 git clone https://github.com/taqu/cpprcoder.git
 cd cpprcoder/test
-mkdir build_simd
-pushd build_simd
-cmake -G"Visual Studio 15 2017 Win64" -DUSE_SIMD=1 ..
+tar jxvf cantrbry.tar.bz2
+```
+
+Next,
+```
+mkdir build
+pushd build
+cmake -DUSE_SIMD=1 ..
 ```
 
 # License

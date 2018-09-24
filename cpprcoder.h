@@ -111,12 +111,6 @@ namespace cpprcoder
 #define CPPRCODER_MAXRANGE_DECODE (0x00FFFFFFU)
 #endif
 
-#if defined(__AVX__)
-#define CPPRCODER_USE_AVX (1)
-#elif defined(__SSE2__)
-#define CPPRCODER_USE_SSE2 (1)
-#endif
-
     enum Status
     {
         Status_Success = 0,
@@ -277,7 +271,7 @@ namespace cpprcoder
         void countChunks();
 
         u32 total_;
-#if defined(CPPRCODER_USE_SSE2) || defined(CPPRCODER_USE_AVX)
+#if defined(CPPRCODER_USE_SIMD)
         u32* prefix_;
         u32* frequencies_;
         u32 prefix_buffer_[CHUNKS + 4];
@@ -404,12 +398,7 @@ namespace cpprcoder
 
 #ifdef CPPRCODER_IMPLEMENTATION
 
-#ifdef CPPRCODER_USE_SSE2
-#include <immintrin.h>
-#include <emmintrin.h>
-#endif
-
-#ifdef CPPRCODER_USE_AVX
+#ifdef CPPRCODER_USE_SIMD
 #include <immintrin.h>
 #endif
 
@@ -656,7 +645,7 @@ namespace cpprcoder
     FrequencyTable::FrequencyTable()
         :total_(SIZE)
     {
-#if defined(CPPRCODER_USE_SSE2) || defined(CPPRCODER_USE_AVX)
+#if defined(CPPRCODER_USE_SIMD)
         prefix_ = reinterpret_cast<u32*>((reinterpret_cast<uintptr_t>(prefix_buffer_) + ALIGN_MASK) & ~ALIGN_MASK);
         frequencies_ = reinterpret_cast<u32*>((reinterpret_cast<uintptr_t>(frequencies_buffer_) + ALIGN_MASK) & ~ALIGN_MASK);
 
@@ -695,7 +684,7 @@ namespace cpprcoder
 
     void FrequencyTable::update(u8 b)
     {
-#if defined(CPPRCODER_USE_SSE2) || defined(CPPRCODER_USE_AVX)
+#if defined(CPPRCODER_USE_SIMD)
         ++frequencies_[b];
         if(CPPRCODER_MINRANGE<=(++total_)){
             __m128i one = _mm_set1_epi32(1);
@@ -766,7 +755,7 @@ namespace cpprcoder
 
     void FrequencyTable::find(u32& count, u8& code, u32 target) const
     {
-#if 0 //#if defined(CPPRCODER_USE_SSE2) || defined(CPPRCODER_USE_AVX)
+#if 0 //#if defined(CPPRCODER_USE_SIMD)
         __m128i target128 = _mm_set1_epi32(target);
         __m128i one = _mm_set1_epi32(1);
 
@@ -855,7 +844,7 @@ namespace cpprcoder
 
     void BinaryIndexedTree::initialize(u32 value)
     {
-#if defined(CPPRCODER_USE_SSE2) || defined(CPPRCODER_USE_AVX)
+#if defined(CPPRCODER_USE_SIMD)
         __m128i one = _mm_set1_epi32(0);
         __m128i* p = reinterpret_cast<__m128i*>(frequencies_);
         __m128i* end = p + (SIZE/4);
