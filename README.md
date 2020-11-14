@@ -75,4 +75,4 @@ cmake -DUSE_SIMD=1 ..
 ```
 
 # License
-This is free and unencumbered software released into the public domain.
+This software is distributed under two licenses 'The MIT License' or 'Public Domain', choose whichever you like.
