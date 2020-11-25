@@ -19,6 +19,13 @@
 #    include <lz4/lz4.h>
 #endif
 
+#define USE_RC
+#define USE_ADAPTIVE
+#define USE_SLZ4
+#define USE_ZLIB
+
+//#undef USE_LZ4
+
 class Timer
 {
 public:
@@ -46,9 +53,11 @@ long long Timer::microseconds() const
     return std::chrono::duration_cast<std::chrono::microseconds>(end_ - start_).count();
 }
 
+#ifdef USE_SLZ4
 int def_slz4(cpprcoder::MemoryStream& outStream, cpprcoder::u32 srcSize, cpprcoder::u8* src)
 {
-    cpprcoder::s32 result = slz4::compress(outStream.capacity(), reinterpret_cast<slz4::u8*>(&outStream[0]), srcSize, reinterpret_cast<slz4::u8*>(src));
+    slz4::SLZ4Context context;
+    cpprcoder::s32 result = slz4::compress(context, outStream.capacity(), reinterpret_cast<slz4::u8*>(&outStream[0]), srcSize, reinterpret_cast<slz4::u8*>(src));
 
     if(0 <= result) {
         outStream.resize(result);
@@ -64,7 +73,9 @@ int inf_slz4(cpprcoder::MemoryStream& outStream, cpprcoder::u32 srcSize, cpprcod
     }
     return result;
 }
+#endif
 
+#ifdef USE_ZLIB
 int def_zlib(cpprcoder::MemoryStream& outStream, cpprcoder::u32 srcSize, cpprcoder::u8* src)
 {
     int ret, flush;
@@ -156,6 +167,7 @@ int inf_zlib(cpprcoder::MemoryStream& outStream, cpprcoder::u32 srcSize, cpprcod
     inflateEnd(&stream);
     return ret == Z_STREAM_END ? outCount : Z_DATA_ERROR;
 }
+#endif
 
 #ifdef USE_LZ4
 int def_lz4(cpprcoder::MemoryStream& outStream, cpprcoder::u32 srcSize, cpprcoder::u8* src)
@@ -177,6 +189,7 @@ int inf_lz4(cpprcoder::MemoryStream& outStream, cpprcoder::u32 srcSize, cpprcode
 }
 #endif
 
+#ifdef USE_RC
 void run_rangecoder(const char* filepath)
 {
     Timer timer;
@@ -223,7 +236,9 @@ void run_rangecoder(const char* filepath)
     }
     delete[] src;
 }
+#endif
 
+#ifdef USE_ADAPTIVE
 void run_adaptive(const char* filepath)
 {
     Timer timer;
@@ -281,7 +296,9 @@ void run_adaptive(const char* filepath)
     }
     delete[] src;
 }
+#endif
 
+#ifdef USE_SLZ4
 void run_slz4(const char* filepath)
 {
     Timer timer;
@@ -312,6 +329,7 @@ void run_slz4(const char* filepath)
     timer.stop();
     deflateTime = timer.microseconds();
 
+    timer.start();
     if(inf_slz4(decstream, encstream.size(), &encstream[0]) < 0) {
         delete[] src;
         return;
@@ -319,12 +337,19 @@ void run_slz4(const char* filepath)
     timer.stop();
     inflateTime = timer.microseconds();
 
+    for(size_t i=0; i<decstream.size(); ++i){
+        if(src[i] != decstream[i]){
+            return;
+        }
+    }
     double ratio = (double)encstream.size() / size;
     //printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
     printf("|%s|%f|%lld|%lld|\n", filepath, ratio, deflateTime, inflateTime);
     delete[] src;
 }
+#endif
 
+#ifdef USE_ZLIB
 void run_zlib(const char* filepath)
 {
     Timer timer;
@@ -353,6 +378,7 @@ void run_zlib(const char* filepath)
     timer.stop();
     deflateTime = timer.microseconds();
 
+    timer.start();
     if(inf_zlib(decstream, encstream.size(), &encstream[0]) < 0) {
         delete[] src;
         return;
@@ -365,6 +391,7 @@ void run_zlib(const char* filepath)
     printf("|%s|%f|%lld|%lld|\n", filepath, ratio, deflateTime, inflateTime);
     delete[] src;
 }
+#endif
 
 #ifdef USE_LZ4
 void run_lz4(const char* filepath)
@@ -396,7 +423,8 @@ void run_lz4(const char* filepath)
     }
     timer.stop();
     deflateTime = timer.microseconds();
-
+    
+    timer.start();
     if(inf_lz4(decstream, encstream.size(), &encstream[0]) < 0) {
         delete[] src;
         return;
@@ -411,6 +439,7 @@ void run_lz4(const char* filepath)
 }
 #endif
 
+#ifdef USE_RC
 bool test_rangecoder()
 {
     std::mt19937 mt;
@@ -439,7 +468,9 @@ bool test_rangecoder()
     }
     return true;
 }
+#endif
 
+#ifdef USE_ADAPTIVE
 bool test_adaptive()
 {
     std::mt19937 mt;
@@ -477,10 +508,11 @@ bool test_adaptive()
     }
     return true;
 }
+#endif
 
 int main(int /*argc*/, char** /*argv*/)
 {
-    test_rangecoder();
+    //test_rangecoder();
     //test_adaptive();
 
     const char* files[] =
@@ -499,25 +531,31 @@ int main(int /*argc*/, char** /*argv*/)
         };
     static const int numFiles = sizeof(files) / (sizeof(files[0]));
 
+    #ifdef USE_RC
     printf("Range Coder\n");
     printf("-------------------------------------------\n");
     for(int i = 0; i < numFiles; ++i) {
         run_rangecoder(files[i]);
     }
+    #endif
 
+    #ifdef USE_ADAPTIVE
     printf("Adaptive Range Coder\n");
     printf("-------------------------------------------\n");
     for(int i = 0; i < numFiles; ++i) {
         run_adaptive(files[i]);
     }
+    #endif
 
+    #ifdef USE_SLZ4
     printf("SLZ4\n");
     printf("-------------------------------------------\n");
     for(int i = 0; i < numFiles; ++i) {
         run_slz4(files[i]);
     }
+    #endif
 
-#if 1
+#ifdef USE_ZLIB
     printf("ZLib\n");
     printf("-------------------------------------------\n");
     for(int i = 0; i < numFiles; ++i) {
