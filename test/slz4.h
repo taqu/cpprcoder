@@ -134,27 +134,27 @@ struct LZSSMatch
 };
 
 /**
-    @return The number of bytes written into 'dst' or a negative value if this function fails.
-    @param capacity ... Byte size of a destination buffer 'dst'. This is at least more than the size which is reterned by the compressBound.
-    @param dst ... A destination buffer.
-    @param size ... Byte size of a source data. The maximum supported value for this is MAX_BLOCK_SIZE.
-    @param src ... A source data.
-    */
+@return The number of bytes written into 'dst' or a negative value if this function fails.
+@param capacity ... Byte size of a destination buffer 'dst'. This is at least more than the size which is reterned by the compressBound.
+@param dst ... A destination buffer.
+@param size ... Byte size of a source data. The maximum supported value for this is MAX_BLOCK_SIZE.
+@param src ... A source data.
+*/
 s32 compress(SLZ4Context& context, u32 capacity, u8* dst, u32 size, const u8* src);
 
 /**
-    @return The maximum number of bytes that compression may write into a destination buffer.
-    @param size ... Byte size of a source data. The maximum supported value for this is MAX_BLOCK_SIZE.
-    */
+@return The maximum number of bytes that compression may write into a destination buffer.
+@param size ... Byte size of a source data. The maximum supported value for this is MAX_BLOCK_SIZE.
+*/
 s32 compressBound(u32 size);
 
 /**
-    @return The number of bytes written into 'dst' or a negative value if this function fails.
-    @param capacity ... Byte size of a destination buffer 'dst'. The maximum supported value for this is MAX_BLOCK_SIZE.
-    @param dst ... A destination buffer.
-    @param size ... Byte size of a compressed data 'src'.
-    @param src ... A source compressed data.
-    */
+@return The number of bytes written into 'dst' or a negative value if this function fails.
+@param capacity ... Byte size of a destination buffer 'dst'. The maximum supported value for this is MAX_BLOCK_SIZE.
+@param dst ... A destination buffer.
+@param size ... Byte size of a compressed data 'src'.
+@param src ... A source compressed data.
+*/
 s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src);
 
 } //namespace slz4
@@ -165,8 +165,8 @@ s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src);
 #include <immintrin.h>
 
 #define XXH_INLINE_ALL
-#define XXH_STATIC_LINKING_ONLY   /* access advanced declarations */
-#define XXH_IMPLEMENTATION   /* access definitions */
+#define XXH_STATIC_LINKING_ONLY /* access advanced declarations */
+#define XXH_IMPLEMENTATION      /* access definitions */
 #include <xxhash.h>
 
 namespace slz4
@@ -187,7 +187,7 @@ namespace
 
     u32 push(u32 code, u32 u)
     {
-        return (code >> 8) | (u<<24);
+        return (code >> 8) | (u << 24);
     }
 
     u32 hash(u32 code)
@@ -365,27 +365,42 @@ namespace
     }
 
     //-------------------------------------------------------------------
+    void set(u8* dst, s32 value, u32 size)
+    {
+        u32 s = size>>7;
+        SLZ4_ASSERT(size == (s<<7));
+        __m256i x = _mm256_set1_epi32(value);
+        for(u32 i=0; i<s; ++i){
+            _mm256_store_si256(reinterpret_cast<__m256i*>(dst), x);
+            _mm256_store_si256(reinterpret_cast<__m256i*>(dst+32), x);
+            _mm256_store_si256(reinterpret_cast<__m256i*>(dst+64), x);
+            _mm256_store_si256(reinterpret_cast<__m256i*>(dst+96), x);
+            dst += 128;
+        }
+    }
+
+    //-------------------------------------------------------------------
     void copy(u8* dst, const u8* src, u32 size)
     {
-        u32 s = size>>6;
-        for(u32 i=0; i<s; ++i){
+        u32 s = size >> 6;
+        for(u32 i = 0; i < s; ++i) {
             _mm_storeu_ps(reinterpret_cast<f32*>(dst), _mm_loadu_ps(reinterpret_cast<const f32*>(src)));
-            _mm_storeu_ps(reinterpret_cast<f32*>(dst+16), _mm_loadu_ps(reinterpret_cast<const f32*>(src+16)));
-            _mm_storeu_ps(reinterpret_cast<f32*>(dst+32), _mm_loadu_ps(reinterpret_cast<const f32*>(src+32)));
-            _mm_storeu_ps(reinterpret_cast<f32*>(dst+48), _mm_loadu_ps(reinterpret_cast<const f32*>(src+48)));
+            _mm_storeu_ps(reinterpret_cast<f32*>(dst + 16), _mm_loadu_ps(reinterpret_cast<const f32*>(src + 16)));
+            _mm_storeu_ps(reinterpret_cast<f32*>(dst + 32), _mm_loadu_ps(reinterpret_cast<const f32*>(src + 32)));
+            _mm_storeu_ps(reinterpret_cast<f32*>(dst + 48), _mm_loadu_ps(reinterpret_cast<const f32*>(src + 48)));
             dst += 64;
             src += 64;
         }
-        size -= (s<<6);
-        s = size>>4;
-        for(u32 i=0; i<s; ++i){
+        size -= (s << 6);
+        s = size >> 4;
+        for(u32 i = 0; i < s; ++i) {
             _mm_storeu_ps(reinterpret_cast<f32*>(dst), _mm_loadu_ps(reinterpret_cast<const f32*>(src)));
             dst += 16;
             src += 16;
         }
 
-        s = size - (s<<4);
-        for(u32 i=0; i<s; ++i){
+        s = size - (s << 4);
+        for(u32 i = 0; i < s; ++i) {
             dst[i] = src[i];
         }
     }
@@ -406,7 +421,8 @@ s32 compress(SLZ4Context& context, u32 capacity, u8* dst, u32 size, const u8* sr
                    : -1;
     }
 
-    memset(context.entries_, -1, sizeof(s32) * DICTIONARY_SIZE);
+    //memset(context.entries_, -1, sizeof(s32) * DICTIONARY_SIZE);
+    set(reinterpret_cast<u8*>(context.entries_), -1, sizeof(s32)*DICTIONARY_SIZE);
     { //Add the first code to our dictionary
         u32 code = pack(src);
         u32 index = hash(code) & (DICTIONARY_SIZE - 1);
@@ -418,7 +434,7 @@ s32 compress(SLZ4Context& context, u32 capacity, u8* dst, u32 size, const u8* sr
     u32 pending = 0;
     u32 position = 4;
     while(position < endMatch) {
-        u32 code = pack(src+position);
+        u32 code = pack(src + position);
         LZSSMatch match = findLongestMatch(context, code, src, position, end);
 
         if(MIN_MATCH_LENGTH <= match.length_) {
@@ -454,7 +470,7 @@ s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src)
 {
     SLZ4_ASSERT(0 <= size);
     SLZ4_ASSERT(0 <= capacity && capacity <= MAX_BLOCK_SIZE);
-    if(MAX_BLOCK_SIZE<capacity){
+    if(MAX_BLOCK_SIZE < capacity) {
         return -1;
     }
     const u8* current = src;
@@ -464,10 +480,11 @@ s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src)
     u8* d = dst;
 
     for(;;) {
-        //Decode token
         if(end0 <= current) {
-            return -1;
+            break;
         }
+
+        //Decode token
         u32 literalLength = (current[0] >> 4);
         u32 matchLength = (current[0]) & 0xFU;
         ++current;
@@ -478,13 +495,12 @@ s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src)
         }
 
         //Read literals
-        if(end0<(current + literalLength)){
+        if(end0 < (current + literalLength)) {
             return -1;
         }
-        if(dend<(d + literalLength)){
+        if(dend < (d + literalLength)) {
             return -1;
         }
-        //memcpy(d, current, literalLength);
         copy(d, current, literalLength);
         d += literalLength;
         current += literalLength;
@@ -503,15 +519,15 @@ s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src)
         }
 
         //Copy match
-        if(static_cast<s32>(d-dst) < offset) {
+        if(static_cast<s32>(d - dst) < offset) {
             return -1;
         }
         matchLength += MIN_MATCH_LENGTH;
-        if(dend<(d + matchLength)){
+        if(dend < (d + matchLength)) {
             return -1;
         }
         if(16 <= offset) {
-            copy(d, d-offset, matchLength);
+            copy(d, d - offset, matchLength);
             d += matchLength;
         } else {
             while(0 < matchLength) {
@@ -521,7 +537,8 @@ s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src)
             }
         }
     }
-    return static_cast<s32>(d-dst);
+    return static_cast<s32>(d - dst);
 }
+
 } //namespace slz4
 #endif //SLZ4_IMPLEMENTATION

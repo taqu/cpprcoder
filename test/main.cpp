@@ -58,7 +58,6 @@ int def_slz4(cpprcoder::MemoryStream& outStream, cpprcoder::u32 srcSize, cpprcod
 {
     slz4::SLZ4Context context;
     cpprcoder::s32 result = slz4::compress(context, outStream.capacity(), reinterpret_cast<slz4::u8*>(&outStream[0]), srcSize, reinterpret_cast<slz4::u8*>(src));
-
     if(0 <= result) {
         outStream.resize(result);
     }
@@ -182,9 +181,6 @@ int def_lz4(cpprcoder::MemoryStream& outStream, cpprcoder::u32 srcSize, cpprcode
 int inf_lz4(cpprcoder::MemoryStream& outStream, cpprcoder::u32 srcSize, cpprcoder::u8* src)
 {
     cpprcoder::s32 result = LZ4_decompress_safe(reinterpret_cast<const char*>(src), reinterpret_cast<char*>(&outStream[0]), srcSize, outStream.size());
-    if(0 <= result) {
-        outStream.resize(result);
-    }
     return result;
 }
 #endif
@@ -339,6 +335,7 @@ void run_slz4(const char* filepath)
 
     for(size_t i=0; i<decstream.size(); ++i){
         if(src[i] != decstream[i]){
+            printf("Error: %d != %d\n", src[i], decstream[i]);
             return;
         }
     }
