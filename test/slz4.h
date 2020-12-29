@@ -87,10 +87,10 @@ typedef double f64;
 typedef ::size_t size_t;
 typedef ::ptrdiff_t ptrdiff_t;
 
-#ifdef _NDEBUG
-#    define SLZ4_ASSERT(exp)
-#else
+#ifdef _DEBUG
 #    define SLZ4_ASSERT(exp) assert(exp)
+#else
+#    define SLZ4_ASSERT(exp)
 #endif
 
 inline s32 minimum(s32 x0, s32 x1)
@@ -124,13 +124,13 @@ static const u32 DICTIONARY_SIZE = 0x10000U / 4;
 
 struct SLZ4Context
 {
-    s32 entries_[DICTIONARY_SIZE];
+    u32 entries_[DICTIONARY_SIZE];
 };
 
 struct LZSSMatch
 {
-    s32 distance_;
-    s32 length_;
+    u32 distance_;
+    u32 length_;
 };
 
 /**
@@ -214,14 +214,16 @@ namespace
     }
 
     //-------------------------------------------------------------------
-    LZSSMatch findLongestMatch(SLZ4Context& context, u32 code, const u8* start, s32 position, s32 end)
+    LZSSMatch findLongestMatch(SLZ4Context& context, u32 code, const u8* start, u32 position, u32 end)
     {
         SLZ4_ASSERT(MIN_MATCH_LENGTH <= (end - position));
 
+        bool debug = (476929 == position);
+
         u32 index = hash(code) & (DICTIONARY_SIZE - 1);
-        s32 result = context.entries_[index];
+        u32 result = context.entries_[index];
         context.entries_[index] = position;
-        if(result < 0) {
+        if(result == 0xFFFFFFFFU) {
             return {0, 0};
         }
         if(code != pack(start + result)
@@ -230,8 +232,8 @@ namespace
         }
 
         SLZ4_ASSERT(result < position);
-        s32 distance = position - result;
-        s32 match = result + 4;
+        u32 distance = position - result;
+        u32 match = result + 4;
         position += 4;
         SLZ4_ASSERT(start[match - 4] == start[position - 4]);
         SLZ4_ASSERT(start[match - 3] == start[position - 3]);
@@ -239,18 +241,11 @@ namespace
         SLZ4_ASSERT(start[match - 1] == start[position - 1]);
 
         while(position < end) {
-            if(*reinterpret_cast<const u32*>(&start[match]) != *reinterpret_cast<const u32*>(&start[position])) {
-                while(position < end) {
-                    if(start[match] != start[position]) {
-                        break;
-                    }
-                    ++match;
-                    ++position;
-                }
+            if(start[match] != start[position]) {
                 break;
             }
-            match += 4;
-            position += 4;
+            ++match;
+            ++position;
         }
         return {distance, match - result};
     }
@@ -264,12 +259,12 @@ namespace
         }
         length -= MAX_IN_TOKEN;
 
-        while(255 <= length) {
+        while(255U <= length) {
             if(capacity <= pos) {
                 return false;
             }
-            dst[pos++] = 255;
-            length -= 255;
+            dst[pos++] = 255U;
+            length -= 255U;
         }
         if(capacity <= pos) {
             return false;
@@ -354,10 +349,10 @@ namespace
     {
         u32 length = 0;
         while(current < end) {
-            s32 len = current[0];
+            u32 len = current[0];
             length += len;
             ++current;
-            if(len < 255) {
+            if(len < 255U) {
                 break;
             }
         }
@@ -365,7 +360,22 @@ namespace
     }
 
     //-------------------------------------------------------------------
-    void set(u8* dst, s32 value, u32 size)
+    u32 decodeLength(u32& current, u32 end, const u8* src)
+    {
+        u32 length = 0;
+        while(current < end) {
+            u32 len = src[current];
+            length += len;
+            ++current;
+            if(len < 255U) {
+                break;
+            }
+        }
+        return length;
+    }
+
+    //-------------------------------------------------------------------
+    void set(u8* dst, u32 value, u32 size)
     {
         u32 s = size>>7;
         SLZ4_ASSERT(size == (s<<7));
@@ -382,28 +392,11 @@ namespace
     //-------------------------------------------------------------------
     void copy(u8* dst, const u8* src, u32 size)
     {
-        u32 s = size >> 6;
-        for(u32 i = 0; i < s; ++i) {
-            _mm_storeu_ps(reinterpret_cast<f32*>(dst), _mm_loadu_ps(reinterpret_cast<const f32*>(src)));
-            _mm_storeu_ps(reinterpret_cast<f32*>(dst + 16), _mm_loadu_ps(reinterpret_cast<const f32*>(src + 16)));
-            _mm_storeu_ps(reinterpret_cast<f32*>(dst + 32), _mm_loadu_ps(reinterpret_cast<const f32*>(src + 32)));
-            _mm_storeu_ps(reinterpret_cast<f32*>(dst + 48), _mm_loadu_ps(reinterpret_cast<const f32*>(src + 48)));
-            dst += 64;
-            src += 64;
-        }
-        size -= (s << 6);
-        s = size >> 4;
-        for(u32 i = 0; i < s; ++i) {
-            _mm_storeu_ps(reinterpret_cast<f32*>(dst), _mm_loadu_ps(reinterpret_cast<const f32*>(src)));
-            dst += 16;
-            src += 16;
-        }
-
-        s = size - (s << 4);
-        for(u32 i = 0; i < s; ++i) {
+        for(u32 i=0; i<size; ++i){
             dst[i] = src[i];
         }
     }
+
 } // namespace
 
 //-------------------------------------------------------------------
@@ -421,8 +414,7 @@ s32 compress(SLZ4Context& context, u32 capacity, u8* dst, u32 size, const u8* sr
                    : -1;
     }
 
-    //memset(context.entries_, -1, sizeof(s32) * DICTIONARY_SIZE);
-    set(reinterpret_cast<u8*>(context.entries_), -1, sizeof(s32)*DICTIONARY_SIZE);
+    set(reinterpret_cast<u8*>(context.entries_), 0xFFFFFFFFU, sizeof(u32)*DICTIONARY_SIZE);
     { //Add the first code to our dictionary
         u32 code = pack(src);
         u32 index = hash(code) & (DICTIONARY_SIZE - 1);
@@ -468,16 +460,16 @@ s32 compressBound(u32 size)
 //-------------------------------------------------------------------
 s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src)
 {
-    SLZ4_ASSERT(0 <= size);
-    SLZ4_ASSERT(0 <= capacity && capacity <= MAX_BLOCK_SIZE);
+    SLZ4_ASSERT(capacity <= MAX_BLOCK_SIZE);
     if(MAX_BLOCK_SIZE < capacity) {
         return -1;
     }
-    const u8* current = src;
-    const u8* end0 = src + size;
-    const u8* end1 = end0 - END_LITERALS;
-    const u8* dend = dst + capacity;
-    u8* d = dst;
+    u32 current = 0;
+    u32 end0 = size;
+    u32 end1 = END_LITERALS<=size? size-END_LITERALS : 0;
+    u32 dend = capacity;
+
+    u32 d = 0;
 
     for(;;) {
         if(end0 <= current) {
@@ -485,23 +477,23 @@ s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src)
         }
 
         //Decode token
-        u32 literalLength = (current[0] >> 4);
-        u32 matchLength = (current[0]) & 0xFU;
+        u32 literalLength = (src[current] >> 4);
+        u32 matchLength = (src[current]) & 0xFU;
         ++current;
 
         //Decode literal length
         if(MAX_IN_TOKEN <= literalLength) {
-            literalLength += decodeLength(current, end0);
+            literalLength += decodeLength(current, end0, src);
         }
 
         //Read literals
-        if(end0 < (current + literalLength)) {
+        if(end0<current || (end0-current)<literalLength){
             return -1;
         }
-        if(dend < (d + literalLength)) {
+        if(dend<d || (dend-d)<literalLength){
             return -1;
         }
-        copy(d, current, literalLength);
+        copy(&dst[d], &src[current], literalLength);
         d += literalLength;
         current += literalLength;
 
@@ -510,34 +502,34 @@ s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src)
         }
 
         //Decode match offset
-        s32 offset = current[0] | (current[1] << 8);
+        u32 offset = static_cast<u32>(src[current]) | (static_cast<u32>(src[current+1]) << 8);
         current += 2;
 
         //Decode match length
         if(MAX_IN_TOKEN <= matchLength) {
-            matchLength += decodeLength(current, end0);
+            matchLength += decodeLength(current, end0, src);
         }
 
         //Copy match
-        if(static_cast<s32>(d - dst) < offset) {
+        if(d < offset) {
             return -1;
         }
         matchLength += MIN_MATCH_LENGTH;
-        if(dend < (d + matchLength)) {
+        if(dend<d || (dend-d)<matchLength){
             return -1;
         }
         if(16 <= offset) {
-            copy(d, d - offset, matchLength);
+            copy(&dst[d], &dst[d - offset], matchLength);
             d += matchLength;
         } else {
             while(0 < matchLength) {
-                d[0] = d[-offset];
+                dst[d] = dst[d-offset];
                 ++d;
                 --matchLength;
             }
         }
     }
-    return static_cast<s32>(d - dst);
+    return static_cast<s32>(d);
 }
 
 } //namespace slz4

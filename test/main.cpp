@@ -319,6 +319,7 @@ void run_slz4(const char* filepath)
 
     timer.start();
     if(def_slz4(encstream, size, src) < 0) {
+        printf("Error in def_slz4\n");
         delete[] src;
         return;
     }
@@ -327,13 +328,14 @@ void run_slz4(const char* filepath)
 
     timer.start();
     if(inf_slz4(decstream, encstream.size(), &encstream[0]) < 0) {
+        printf("Error in inf_slz4\n");
         delete[] src;
         return;
     }
     timer.stop();
     inflateTime = timer.microseconds();
 
-    for(size_t i=0; i<decstream.size(); ++i){
+    for(int i=0; i<decstream.size(); ++i){
         if(src[i] != decstream[i]){
             printf("Error: %d != %d\n", src[i], decstream[i]);
             return;
