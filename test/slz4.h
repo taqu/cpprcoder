@@ -121,6 +121,7 @@ static const u32 LOOKAHEAD_LENGTH = 12;
 static const u32 MAX_IN_TOKEN = 15;
 
 static const u32 DICTIONARY_SIZE = 0x10000U / 4;
+static const u32 INVALID_ENTRY = 0xFFFFFFFFU;
 
 struct SLZ4Context
 {
@@ -166,23 +167,27 @@ s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src);
 
 #define XXH_INLINE_ALL
 #define XXH_STATIC_LINKING_ONLY /* access advanced declarations */
-#define XXH_IMPLEMENTATION      /* access definitions */
+#define XXH_IMPLEMENTATION /* access definitions */
 #include <xxhash.h>
 
 namespace slz4
 {
 namespace
 {
+    union U32Bytes
+    {
+        u8 bytes_[4];
+        u32 u32_;
+    };
+
     u32 pack(const u8* ptr)
     {
-        u32 result;
-        u8* u = reinterpret_cast<u8*>(&result);
-        u[0] = ptr[0];
-        u[1] = ptr[1];
-        u[2] = ptr[2];
-        u[3] = ptr[3];
-        return result;
-        //return ptr[0] | (ptr[1] << 8) | (ptr[2] << 16) | (ptr[3] << 24);
+        U32Bytes bytes;
+        bytes.bytes_[0] = ptr[0];
+        bytes.bytes_[1] = ptr[1];
+        bytes.bytes_[2] = ptr[2];
+        bytes.bytes_[3] = ptr[3];
+        return bytes.u32_;
     }
 
     u32 push(u32 code, u32 u)
@@ -192,25 +197,7 @@ namespace
 
     u32 hash(u32 code)
     {
-#if 1
         return XXH32_u32(code, 0x811C9DC5U);
-#else
-        u32 hash = 0x811C9DC5U;
-
-        hash ^= ((code >> 0) & 0xFFU);
-        hash *= 0x01000193U;
-
-        hash ^= ((code >> 8) & 0xFFU);
-        hash *= 0x01000193U;
-
-        hash ^= ((code >> 16) & 0xFFU);
-        hash *= 0x01000193U;
-
-        hash ^= ((code >> 24) & 0xFFU);
-        hash *= 0x01000193U;
-
-        return hash;
-#endif
     }
 
     //-------------------------------------------------------------------
@@ -218,16 +205,12 @@ namespace
     {
         SLZ4_ASSERT(MIN_MATCH_LENGTH <= (end - position));
 
-        bool debug = (476929 == position);
-
         u32 index = hash(code) & (DICTIONARY_SIZE - 1);
         u32 result = context.entries_[index];
         context.entries_[index] = position;
-        if(result == 0xFFFFFFFFU) {
-            return {0, 0};
-        }
-        if(code != pack(start + result)
-           || MAX_DISTANCE < (position - result)) {
+        if(INVALID_ENTRY == result
+           || MAX_DISTANCE < (position - result)
+           || code != pack(start + result)) {
             return {0, 0};
         }
 
@@ -377,14 +360,14 @@ namespace
     //-------------------------------------------------------------------
     void set(u8* dst, u32 value, u32 size)
     {
-        u32 s = size>>7;
-        SLZ4_ASSERT(size == (s<<7));
+        u32 s = size >> 7;
+        SLZ4_ASSERT(size == (s << 7));
         __m256i x = _mm256_set1_epi32(value);
-        for(u32 i=0; i<s; ++i){
+        for(u32 i = 0; i < s; ++i) {
             _mm256_store_si256(reinterpret_cast<__m256i*>(dst), x);
-            _mm256_store_si256(reinterpret_cast<__m256i*>(dst+32), x);
-            _mm256_store_si256(reinterpret_cast<__m256i*>(dst+64), x);
-            _mm256_store_si256(reinterpret_cast<__m256i*>(dst+96), x);
+            _mm256_store_si256(reinterpret_cast<__m256i*>(dst + 32), x);
+            _mm256_store_si256(reinterpret_cast<__m256i*>(dst + 64), x);
+            _mm256_store_si256(reinterpret_cast<__m256i*>(dst + 96), x);
             dst += 128;
         }
     }
@@ -392,8 +375,84 @@ namespace
     //-------------------------------------------------------------------
     void copy(u8* dst, const u8* src, u32 size)
     {
-        for(u32 i=0; i<size; ++i){
-            dst[i] = src[i];
+        static const uintptr_t AlignMask = 3U;
+        u32 a0 = reinterpret_cast<u32>(dst) & AlignMask;
+        u32 a1 = reinterpret_cast<u32>(src) & AlignMask;
+
+        u32 align = (((0 != a0) ? 1 : 0) << 1) | ((0 != a1) ? 1 : 0);
+        u32 pos = 0;
+        switch(align) {
+        case 0: //both are aligned
+        {
+            u32 t0;
+            u32 s = size;
+            while(4 < s) {
+                t0 = *reinterpret_cast<const u32*>(&src[pos]);
+                *reinterpret_cast<u32*>(&dst[pos]) = t0;
+                pos += 4;
+                s -= 4;
+            }
+        } break;
+        case 1: //dst is aligned
+        {
+            u32 t0;
+            u32 s = size;
+            while(4 < s) {
+                t0 = pack(&src[pos]);
+                *reinterpret_cast<u32*>(&dst[pos]) = t0;
+                pos += 4;
+                s -= 4;
+            }
+        } break;
+        case 2: //src is aligned
+        {
+            u32 s = size;
+            U32Bytes bytes;
+            while(4 < s) {
+                bytes.u32_ = *reinterpret_cast<const u32*>(&src[pos]);
+                dst[pos + 0] = bytes.bytes_[0];
+                dst[pos + 1] = bytes.bytes_[1];
+                dst[pos + 2] = bytes.bytes_[2];
+                dst[pos + 3] = bytes.bytes_[3];
+                pos += 4;
+                s -= 4;
+            }
+        } break;
+        default: //both are unaligned
+        {
+            u32 s = size;
+            while(4 < s) {
+                dst[pos + 0] = src[pos + 0];
+                dst[pos + 1] = src[pos + 1];
+                dst[pos + 2] = src[pos + 2];
+                dst[pos + 3] = src[pos + 3];
+                pos += 4;
+                s -= 4;
+            }
+        }
+            break;
+        }
+        while(pos < size) {
+            dst[pos] = src[pos];
+            ++pos;
+        }
+    }
+
+    void copy_overlap(u8* dst, const u8* src, u32 size)
+    {
+        u32 pos = 0;
+        u32 s = size;
+        while(4 < s) {
+            dst[pos + 0] = src[pos + 0];
+            dst[pos + 1] = src[pos + 1];
+            dst[pos + 2] = src[pos + 2];
+            dst[pos + 3] = src[pos + 3];
+            pos += 4;
+            s -= 4;
+        }
+        while(pos < size) {
+            dst[pos] = src[pos];
+            ++pos;
         }
     }
 
@@ -414,7 +473,7 @@ s32 compress(SLZ4Context& context, u32 capacity, u8* dst, u32 size, const u8* sr
                    : -1;
     }
 
-    set(reinterpret_cast<u8*>(context.entries_), 0xFFFFFFFFU, sizeof(u32)*DICTIONARY_SIZE);
+    set(reinterpret_cast<u8*>(context.entries_), INVALID_ENTRY, sizeof(u32) * DICTIONARY_SIZE);
     { //Add the first code to our dictionary
         u32 code = pack(src);
         u32 index = hash(code) & (DICTIONARY_SIZE - 1);
@@ -466,7 +525,7 @@ s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src)
     }
     u32 current = 0;
     u32 end0 = size;
-    u32 end1 = END_LITERALS<=size? size-END_LITERALS : 0;
+    u32 end1 = END_LITERALS <= size ? size - END_LITERALS : 0;
     u32 dend = capacity;
 
     u32 d = 0;
@@ -487,13 +546,13 @@ s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src)
         }
 
         //Read literals
-        if(end0<current || (end0-current)<literalLength){
+        if(end0 < current || (end0 - current) < literalLength) {
             return -1;
         }
-        if(dend<d || (dend-d)<literalLength){
+        if(dend < d || (dend - d) < literalLength) {
             return -1;
         }
-        copy(&dst[d], &src[current], literalLength);
+        copy_overlap(&dst[d], &src[current], literalLength);
         d += literalLength;
         current += literalLength;
 
@@ -502,7 +561,7 @@ s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src)
         }
 
         //Decode match offset
-        u32 offset = static_cast<u32>(src[current]) | (static_cast<u32>(src[current+1]) << 8);
+        u32 offset = static_cast<u32>(src[current]) | (static_cast<u32>(src[current + 1]) << 8);
         current += 2;
 
         //Decode match length
@@ -515,19 +574,19 @@ s32 decompress(u32 capacity, u8* dst, u32 size, const u8* src)
             return -1;
         }
         matchLength += MIN_MATCH_LENGTH;
-        if(dend<d || (dend-d)<matchLength){
+        if(dend < d || (dend - d) < matchLength) {
             return -1;
         }
-        if(16 <= offset) {
+#if 1
+        if(4<=offset && 256<=matchLength){
             copy(&dst[d], &dst[d - offset], matchLength);
-            d += matchLength;
-        } else {
-            while(0 < matchLength) {
-                dst[d] = dst[d-offset];
-                ++d;
-                --matchLength;
-            }
+        }else{
+            copy_overlap(&dst[d], &dst[d - offset], matchLength);
         }
+#else
+        copy_overlap(&dst[d], &dst[d - offset], matchLength);
+#endif
+        d += matchLength;
     }
     return static_cast<s32>(d);
 }
