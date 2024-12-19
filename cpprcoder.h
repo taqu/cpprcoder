@@ -50,6 +50,7 @@ References:
 */
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 
 #define CPPRCODER_USE_SIMD
 
