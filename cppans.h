@@ -4,7 +4,7 @@
 USAGE:
 Put '#define CPPANS_IMPLEMENTATION' before including this file to create the implementation.
 */
-#define CPPANS_IMPLEMENTATION (1)
+//#define CPPANS_IMPLEMENTATION(1)
 #include <cstdint>
 #include <immintrin.h>
 

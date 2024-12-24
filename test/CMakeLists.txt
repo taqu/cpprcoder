@@ -5,7 +5,7 @@ set(CMAKE_CONFIGURATION_TYPES "Debug" "Release")
 set(ProjectName TestRangeCoder)
 project(${ProjectName})
 
-set(HEADERS "../cpprcoder.h;slz4.h;../cppans.h")
+set(HEADERS "../cpprcoder.h;slz4.h;../cppans.h;../cppase.h")
 set(SOURCES "main.cpp;slz4.cpp")
 
 include_directories(AFTER ${CMAKE_CURRENT_SOURCE_DIR})
