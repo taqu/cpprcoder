@@ -2,6 +2,8 @@
 #include "../cpprcoder.h"
 #define CPPANS_IMPLEMENTATION
 #include "../cppans.h"
+#define CPPASE_IMPLEMENTATION
+#include "../cppase.h"
 
 #include <chrono>
 #include <fstream>
@@ -9,6 +11,8 @@
 #include <random>
 
 #include "slz4.h"
+#include "../blksort.h"
+#include "zstd.h"
 
 #ifdef _MSC_VER
 #    include <zlib/zlib.h>
@@ -21,13 +25,15 @@
 #    include <lz4/lz4.h>
 #endif
 
+#include <immintrin.h>
+
 #define USE_RC
 #define USE_ADAPTIVE
 #define USE_ANS
+#define USE_ASE
 #define USE_SLZ4
 #define USE_ZLIB
-
-//#undef USE_LZ4
+#define USE_ZSTD
 
 class Timer
 {
@@ -186,6 +192,18 @@ int inf_zlib(cpprcoder::MemoryStream& outStream, cpprcoder::u32 srcSize, cpprcod
 }
 #endif
 
+#ifdef USE_ZSTD
+cpprcoder::s32 def_zstd(cpprcoder::u32 dstSize, cpprcoder::u8* dst, cpprcoder::u32 srcSize, const cpprcoder::u8* src)
+{
+    return ZSTD_compress(dst, dstSize, src, srcSize, 1);
+}
+
+cpprcoder::s32 inf_zstd(cpprcoder::u32 dstSize, cpprcoder::u8* dst, cpprcoder::u32 srcSize, const cpprcoder::u8* src)
+{
+    return ZSTD_decompress(dst, dstSize, src, srcSize);
+}
+#endif
+
 #ifdef USE_LZ4
 int def_lz4(cpprcoder::MemoryStream& outStream, cpprcoder::u32 srcSize, cpprcoder::u8* src)
 {
@@ -240,10 +258,10 @@ void run_rangecoder(const char* filepath)
     timer.stop();
     inflateTime = timer.seconds();
 
-    double ratio = (double)encstream.size() / size;
-    double deflateSpeed = size/deflateTime/(1024.0*1024.0);
-    double inflateSpeed = size/inflateTime/(1024.0*1024.0);
-    //printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    double ratio = (double)size / encstream.size();
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
     print(filepath, ratio, deflateSpeed, inflateSpeed);
     for(cpprcoder::u32 i = 0; i < size; ++i) {
         if(decstream[i] != src[i]) {
@@ -302,10 +320,10 @@ void run_adaptive(const char* filepath)
     timer.stop();
     inflateTime = timer.seconds();
 
-    double ratio = (double)encstream.size() / size;
-    double deflateSpeed = size/deflateTime/(1024.0*1024.0);
-    double inflateSpeed = size/inflateTime/(1024.0*1024.0);
-    //printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    double ratio = (double)size / encstream.size();
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
     print(filepath, ratio, deflateSpeed, inflateSpeed);
     for(cpprcoder::u32 i = 0; i < size; ++i) {
         if(decstream[i] != src[i]) {
@@ -319,7 +337,7 @@ void run_adaptive(const char* filepath)
 #ifdef USE_ANS
 void run_ans(const char* filepath)
 {
-#if 1
+#    if 0
     using namespace cppans;
     static const u32 Size = 256;
     u8* src = new u8[Size];
@@ -348,7 +366,7 @@ void run_ans(const char* filepath)
     delete[] dst;
     delete[] src;
 
-#else
+#    else
     using namespace cppans;
     Timer timer;
     double deflateTime, inflateTime;
@@ -370,7 +388,7 @@ void run_ans(const char* filepath)
 
     timer.start();
     u32 result0 = rANS::encode(dst_size, encoded, size, src);
-    if(0==result0) {
+    if(0 == result0) {
         delete[] encoded;
         delete[] decoded;
         delete[] src;
@@ -380,7 +398,7 @@ void run_ans(const char* filepath)
     deflateTime = timer.seconds();
 
     timer.start();
-    u8* encoded_start = encoded+dst_size-result0;
+    u8* encoded_start = encoded + dst_size - result0;
     u32 result1 = rANS::decode(size, decoded, result0, encoded_start);
     if(0 == result1) {
         delete[] encoded;
@@ -391,7 +409,7 @@ void run_ans(const char* filepath)
     timer.stop();
     inflateTime = timer.seconds();
 
-    double ratio = (double)result0 / size;
+    double ratio = (double)size / result0;
     double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
     double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
     // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
@@ -405,6 +423,338 @@ void run_ans(const char* filepath)
     delete[] decoded;
     delete[] src;
 #    endif
+}
+
+void run_ans_simd(const char* filepath)
+{
+#    if 0
+    using namespace cppans;
+    static const u32 Size = 256;
+    u8* src = new u8[Size];
+    u32 dst_size = rANS::calc_encoded_size(Size);
+    u8* dst = new u8[dst_size];
+    u8* result = new u8[Size];
+    {
+        std::random_device device;
+        std::mt19937 random;
+        random.seed(device());
+        for(u32 i=0; i<Size; ++i){
+            src[i] = static_cast<u8>(random());
+        }
+    }
+    u32 encoded_size = rANS::encode_simd(dst_size, dst, Size, src);
+
+    u8* encoded = dst + dst_size - encoded_size;
+    u32 decoded_size = rANS::decode_simd(Size, result, encoded_size, encoded);
+
+    for(cpprcoder::u32 i = 0; i < Size; ++i) {
+        if(result[i] != src[i]) {
+            printf("[%d] %d != %d\n", i, result[i], src[i]);
+        }
+    }
+    delete[] result;
+    delete[] dst;
+    delete[] src;
+
+#    else
+    using namespace cppans;
+    Timer timer;
+    double deflateTime, inflateTime;
+    std::ifstream file(filepath, std::ios::binary);
+    if(!file.is_open()) {
+        return;
+    }
+    file.seekg(0, std::ios::end);
+    u32 size = static_cast<u32>(file.tellg());
+    file.seekg(0, std::ios::beg);
+
+    u8* src = new u8[size];
+    u8* decoded = new u8[size];
+    file.read(reinterpret_cast<char*>(src), size);
+    file.close();
+
+    u64 dst_size = rANS::calc_encoded_size(size);
+    u8* encoded = new u8[dst_size];
+
+    timer.start();
+    u32 result0 = rANS::encode(dst_size, encoded, size, src);
+    if(0 == result0) {
+        delete[] encoded;
+        delete[] decoded;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    deflateTime = timer.seconds();
+
+    timer.start();
+    u8* encoded_start = encoded + dst_size - result0;
+    u32 result1 = rANS::decode(size, decoded, result0, encoded_start);
+    if(0 == result1) {
+        delete[] encoded;
+        delete[] decoded;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    inflateTime = timer.seconds();
+
+    double ratio = (double)size / result0;
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    print(filepath, ratio, deflateSpeed, inflateSpeed);
+    for(cpprcoder::u32 i = 0; i < size; ++i) {
+        if(decoded[i] != src[i]) {
+            printf("[%d] %d != %d\n", i, decoded[i], src[i]);
+        }
+    }
+    delete[] encoded;
+    delete[] decoded;
+    delete[] src;
+#    endif
+}
+#endif
+
+#ifdef USE_ASE
+void run_ase(const char* filepath)
+{
+    using namespace cppase;
+    using u8 = uint8;
+    using u32 = uint32;
+    using u64 = uint64;
+    Timer timer;
+    double deflateTime, inflateTime;
+    std::ifstream file(filepath, std::ios::binary);
+    if(!file.is_open()) {
+        return;
+    }
+    file.seekg(0, std::ios::end);
+    u32 size = static_cast<u32>(file.tellg());
+    file.seekg(0, std::ios::beg);
+
+    u8* src = new u8[size];
+    u8* decoded = new u8[size];
+    file.read(reinterpret_cast<char*>(src), size);
+    file.close();
+
+    ASE ase;
+    u64 dst_size = ASE::encodeBound(size);
+    u8* encoded = new u8[dst_size];
+
+    timer.start();
+    u32 result0 = ase.encode(size, encoded, src);
+    if(0 == result0) {
+        delete[] encoded;
+        delete[] decoded;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    deflateTime = timer.seconds();
+
+    timer.start();
+    u32 result1 = ase.decode(result0, size, decoded, encoded);
+    if(0 == result1) {
+        delete[] encoded;
+        delete[] decoded;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    inflateTime = timer.seconds();
+
+    double ratio = (double)size / result0;
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    print(filepath, ratio, deflateSpeed, inflateSpeed);
+    for(cpprcoder::u32 i = 0; i < size; ++i) {
+        if(decoded[i] != src[i]) {
+            printf("[%d] %d != %d\n", i, decoded[i], src[i]);
+        }
+    }
+    delete[] encoded;
+    delete[] decoded;
+    delete[] src;
+}
+
+void run_ase_zlib(const char* filepath)
+{
+    using namespace cppase;
+    using u8 = uint8;
+    using u32 = uint32;
+    using u64 = uint64;
+    Timer timer;
+    double deflateTime, inflateTime;
+    std::ifstream file(filepath, std::ios::binary);
+    if(!file.is_open()) {
+        return;
+    }
+    file.seekg(0, std::ios::end);
+    u32 size = static_cast<u32>(file.tellg());
+    file.seekg(0, std::ios::beg);
+
+    u8* src = new u8[size];
+    u8* decoded = new u8[size];
+    file.read(reinterpret_cast<char*>(src), size);
+    file.close();
+
+    ASE ase;
+    u64 dst_size = ASE::encodeBound(size);
+    u8* encoded = new u8[dst_size];
+
+    timer.start();
+    u32 result0 = ase.encode(size, encoded, src);
+    if(0 == result0) {
+        delete[] encoded;
+        delete[] decoded;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    deflateTime = timer.seconds();
+
+    //zlib
+    cpprcoder::MemoryStream encstream(result0);
+    cpprcoder::MemoryStream decstream(result0);
+
+    timer.start();
+    if(def_zlib(encstream, result0, encoded) < 0) {
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    deflateTime += timer.seconds();
+
+    timer.start();
+    if(inf_zlib(decstream, encstream.size(), &encstream[0]) < 0) {
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    inflateTime = timer.seconds();
+    assert(decstream.size()==result0);
+    for(cpprcoder::u32 i = 0; i < result0; ++i) {
+        assert(decstream[i] == encoded[i]);
+    }
+    //zlib
+
+    timer.start();
+    u32 result1 = ase.decode(result0, size, decoded, encoded);
+    if(0 == result1) {
+        delete[] encoded;
+        delete[] decoded;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    inflateTime += timer.seconds();
+    assert(result1 == size);
+
+    double ratio = (double)size / encstream.size();
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    print(filepath, ratio, deflateSpeed, inflateSpeed);
+    for(cpprcoder::u32 i = 0; i < size; ++i) {
+        if(decoded[i] != src[i]) {
+            printf("[%d] %d != %d\n", i, decoded[i], src[i]);
+        }
+    }
+    delete[] encoded;
+    delete[] decoded;
+    delete[] src;
+}
+
+void run_ase_lz4(const char* filepath)
+{
+    using namespace cppase;
+    using u8 = uint8;
+    using u32 = uint32;
+    using u64 = uint64;
+    Timer timer;
+    double deflateTime, inflateTime;
+    std::ifstream file(filepath, std::ios::binary);
+    if(!file.is_open()) {
+        return;
+    }
+    file.seekg(0, std::ios::end);
+    u32 size = static_cast<u32>(file.tellg());
+    file.seekg(0, std::ios::beg);
+
+    u8* src = new u8[size];
+    u8* decoded = new u8[size];
+    file.read(reinterpret_cast<char*>(src), size);
+    file.close();
+
+    ASE ase;
+    u64 dst_size = ASE::encodeBound(size);
+    u8* encoded = new u8[dst_size];
+
+    timer.start();
+    u32 result0 = ase.encode(size, encoded, src);
+    if(0 == result0) {
+        delete[] encoded;
+        delete[] decoded;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    deflateTime = timer.seconds();
+
+    //lz4
+    cpprcoder::MemoryStream encstream(result0 * 2);
+    encstream.resize(result0 * 2);
+    cpprcoder::MemoryStream decstream(result0);
+    decstream.resize(result0);
+
+    timer.start();
+    if(def_lz4(encstream, result0, encoded) < 0) {
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    deflateTime += timer.seconds();
+
+    timer.start();
+    if(inf_lz4(decstream, encstream.size(), &encstream[0]) < 0) {
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    inflateTime = timer.seconds();
+    assert(decstream.size()==result0);
+    for(cpprcoder::u32 i = 0; i < result0; ++i) {
+        assert(decstream[i] == encoded[i]);
+    }
+    //lz4
+
+    timer.start();
+    u32 result1 = ase.decode(result0, size, decoded, encoded);
+    if(0 == result1) {
+        delete[] encoded;
+        delete[] decoded;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    inflateTime += timer.seconds();
+    assert(result1 == size);
+
+    double ratio = (double)size / encstream.size();
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    print(filepath, ratio, deflateSpeed, inflateSpeed);
+    for(cpprcoder::u32 i = 0; i < size; ++i) {
+        if(decoded[i] != src[i]) {
+            printf("[%d] %d != %d\n", i, decoded[i], src[i]);
+        }
+    }
+    delete[] encoded;
+    delete[] decoded;
+    delete[] src;
 }
 #endif
 
@@ -449,16 +799,16 @@ void run_slz4(const char* filepath)
     timer.stop();
     inflateTime = timer.seconds();
 
-    for(int i=0; i<decstream.size(); ++i){
-        if(src[i] != decstream[i]){
+    for(int i = 0; i < decstream.size(); ++i) {
+        if(src[i] != decstream[i]) {
             printf("Error: %d != %d\n", src[i], decstream[i]);
             return;
         }
     }
-    double ratio = (double)encstream.size() / size;
-    double deflateSpeed = size/deflateTime/(1024.0*1024.0);
-    double inflateSpeed = size/inflateTime/(1024.0*1024.0);
-    //printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    double ratio = (double)size / encstream.size();
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
     print(filepath, ratio, deflateSpeed, inflateSpeed);
     delete[] src;
 }
@@ -501,11 +851,187 @@ void run_zlib(const char* filepath)
     timer.stop();
     inflateTime = timer.seconds();
 
-    double ratio = (double)encstream.size() / size;
-    double deflateSpeed = size/deflateTime/(1024.0*1024.0);
-    double inflateSpeed = size/inflateTime/(1024.0*1024.0);
-    //printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    double ratio = (double)size / encstream.size();
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
     print(filepath, ratio, deflateSpeed, inflateSpeed);
+    delete[] src;
+}
+
+void run_zlib_blk(const char* filepath)
+{
+    Timer timer;
+    double deflateTime, inflateTime;
+
+    std::ifstream file(filepath, std::ios::binary);
+    if(!file.is_open()) {
+        return;
+    }
+    file.seekg(0, std::ios::end);
+    cpprcoder::u32 size = static_cast<cpprcoder::u32>(file.tellg());
+    file.seekg(0, std::ios::beg);
+
+    cpprcoder::u8* src = new cpprcoder::u8[size];
+    file.read(reinterpret_cast<char*>(src), size);
+    file.close();
+
+    blksort::BlkSort blksort;
+    uint32_t encoded_size = blksort::BlkSort::encodeBound(size);
+    uint8_t* encoded = new uint8_t[encoded_size];
+    uint8_t* decoded = new uint8_t[size];
+    cpprcoder::MemoryStream encstream(size);
+    cpprcoder::MemoryStream decstream(size);
+
+    timer.start();
+    //blocksort
+    blksort.encode(size,encoded,src);
+    //zlib
+    if(def_zlib(encstream, encoded_size, encoded) < 0) {
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    deflateTime = timer.seconds();
+
+    timer.start();
+    //zlib
+    if(inf_zlib(decstream, encstream.size(), &encstream[0]) < 0) {
+        delete[] src;
+        return;
+    }
+    //blocksort
+    blksort.decode(encoded_size,decoded, &decstream[0]);
+    timer.stop();
+    inflateTime = timer.seconds();
+
+    for(uint32_t i=0; i<size; ++i){
+        assert(decoded[i] == src[i]);
+    }
+
+    double ratio = (double)size / encstream.size();
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    print(filepath, ratio, deflateSpeed, inflateSpeed);
+    delete[] src;
+    delete[] decoded;
+    delete[] encoded;
+}
+#endif
+
+#ifdef USE_ZSTD
+void run_zstd(const char* filepath)
+{
+    Timer timer;
+    double deflateTime, inflateTime;
+
+    std::ifstream file(filepath, std::ios::binary);
+    if(!file.is_open()) {
+        return;
+    }
+    file.seekg(0, std::ios::end);
+    cpprcoder::u32 size = static_cast<cpprcoder::u32>(file.tellg());
+    file.seekg(0, std::ios::beg);
+
+    cpprcoder::u8* src = new cpprcoder::u8[size];
+    file.read(reinterpret_cast<char*>(src), size);
+    file.close();
+    cpprcoder::u32 encodedSize = ZSTD_compressBound(size);
+    cpprcoder::u8* encoded = new cpprcoder::u8[encodedSize];
+    cpprcoder::u8* decoded = new cpprcoder::u8[size];
+
+    timer.start();
+    cpprcoder::s32 encodedActual = def_zstd(encodedSize, encoded, size, src);
+    timer.stop();
+    if(encodedActual < 0) {
+        delete[] src;
+        return;
+    }
+    deflateTime = timer.seconds();
+
+    timer.start();
+    cpprcoder::s32 decodedActual = inf_zstd(size, decoded, encodedActual, encoded);
+    timer.stop();
+    if(decodedActual < 0) {
+        delete[] src;
+        return;
+    }
+    inflateTime = timer.seconds();
+
+    for(uint32_t i=0; i<size; ++i){
+        assert(decoded[i]==src[i]);
+    }
+    double ratio = (double)size / encodedActual;
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    print(filepath, ratio, deflateSpeed, inflateSpeed);
+    delete[] decoded;
+    delete[] encoded;
+    delete[] src;
+}
+
+void run_zstd_blk(const char* filepath)
+{
+    Timer timer;
+    double deflateTime, inflateTime;
+
+    std::ifstream file(filepath, std::ios::binary);
+    if(!file.is_open()) {
+        return;
+    }
+    file.seekg(0, std::ios::end);
+    cpprcoder::u32 size = static_cast<cpprcoder::u32>(file.tellg());
+    file.seekg(0, std::ios::beg);
+
+    cpprcoder::u8* src = new cpprcoder::u8[size];
+    file.read(reinterpret_cast<char*>(src), size);
+    file.close();
+
+    blksort::BlkSort blksort;
+    cpprcoder::u32 encodedSize2 = blksort::BlkSort::encodeBound(size);
+    cpprcoder::u32 encodedSize = ZSTD_compressBound(encodedSize2);
+    cpprcoder::u8* encoded = new cpprcoder::u8[encodedSize];
+    cpprcoder::u8* encoded2 = new cpprcoder::u8[encodedSize2];
+    cpprcoder::u8* decoded = new cpprcoder::u8[encodedSize2];
+    cpprcoder::u8* decoded2 = new cpprcoder::u8[size];
+
+    timer.start();
+    //blocksort
+    blksort.encode(size,encoded2,src);
+
+    cpprcoder::s32 encodedActual = def_zstd(encodedSize, encoded, encodedSize2, encoded2);
+    timer.stop();
+    if(encodedActual < 0) {
+        delete[] src;
+        return;
+    }
+    deflateTime = timer.seconds();
+
+    timer.start();
+    cpprcoder::s32 decodedActual = inf_zstd(encodedSize2, decoded, encodedActual, encoded);
+    //blocksort
+    blksort.decode(decodedActual, decoded2, decoded);
+    timer.stop();
+    if(decodedActual < 0) {
+        delete[] src;
+        return;
+    }
+    inflateTime = timer.seconds();
+
+    for(uint32_t i=0; i<size; ++i){
+        assert(decoded2[i]==src[i]);
+    }
+    double ratio = (double)size / encodedActual;
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    print(filepath, ratio, deflateSpeed, inflateSpeed);
+    delete[] decoded2;
+    delete[] decoded;
+    delete[] encoded2;
+    delete[] encoded;
     delete[] src;
 }
 #endif
@@ -540,7 +1066,7 @@ void run_lz4(const char* filepath)
     }
     timer.stop();
     deflateTime = timer.seconds();
-    
+
     timer.start();
     if(inf_lz4(decstream, encstream.size(), &encstream[0]) < 0) {
         delete[] src;
@@ -549,10 +1075,10 @@ void run_lz4(const char* filepath)
     timer.stop();
     inflateTime = timer.seconds();
 
-    double ratio = (double)encstream.size() / size;
-    double deflateSpeed = size/deflateTime/(1024.0*1024.0);
-    double inflateSpeed = size/inflateTime/(1024.0*1024.0);
-    //printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    double ratio = (double)size / encstream.size();
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
     print(filepath, ratio, deflateSpeed, inflateSpeed);
     delete[] src;
 }
@@ -629,10 +1155,11 @@ bool test_adaptive()
 }
 #endif
 
+
 int main(int /*argc*/, char** /*argv*/)
 {
-    //test_rangecoder();
-    //test_adaptive();
+    // test_rangecoder();
+    // test_adaptive();
 
     const char* files[] =
         {
@@ -647,51 +1174,114 @@ int main(int /*argc*/, char** /*argv*/)
             "../cantrbry/ptt5",
             "../cantrbry/sum",
             "../cantrbry/xargs.1",
+            "../SilesiaCorpus/dickens",
+            "../SilesiaCorpus/mozilla",
+            "../SilesiaCorpus/mr",
+            "../SilesiaCorpus/nci",
+            "../SilesiaCorpus/ooffice",
+            "../SilesiaCorpus/osdb",
+            "../SilesiaCorpus/reymont",
+            "../SilesiaCorpus/samba",
+            "../SilesiaCorpus/sao",
+            "../SilesiaCorpus/webster",
+            "../SilesiaCorpus/xml",
+            "../SilesiaCorpus/x-ray",
         };
     static const int numFiles = sizeof(files) / (sizeof(files[0]));
 
-    #ifdef USE_RC
+#ifdef USE_RC
     printf("Range Coder\n");
     printf("-------------------------------------------\n");
     print_header();
     for(int i = 0; i < numFiles; ++i) {
         run_rangecoder(files[i]);
     }
-    #endif
+#endif
 
-    #ifdef USE_ADAPTIVE
+#ifdef USE_ADAPTIVE
     printf("Adaptive Range Coder\n");
     printf("-------------------------------------------\n");
     print_header();
     for(int i = 0; i < numFiles; ++i) {
         run_adaptive(files[i]);
     }
-    #endif
+#endif
 
-    #ifdef USE_ANS
+#ifdef USE_ANS
     printf("rANS\n");
     printf("-------------------------------------------\n");
     print_header();
     for(int i = 0; i < numFiles; ++i) {
         run_ans(files[i]);
     }
-    #endif
 
-    #ifdef USE_SLZ4
+    printf("rANS SIMD\n");
+    printf("-------------------------------------------\n");
+    print_header();
+    for(int i = 0; i < numFiles; ++i) {
+        run_ans_simd(files[i]);
+    }
+#endif
+#ifdef USE_ASE
+    printf("ASE\n");
+    printf("-------------------------------------------\n");
+    print_header();
+    for(int i = 0; i < numFiles; ++i) {
+        run_ase(files[i]);
+    }
+    printf("ASE-Zlib\n");
+    printf("-------------------------------------------\n");
+    print_header();
+    for(int i = 0; i < numFiles; ++i) {
+        run_ase_zlib(files[i]);
+    }
+    printf("ASE-LZ4\n");
+    printf("-------------------------------------------\n");
+    print_header();
+    for(int i = 0; i < numFiles; ++i) {
+        run_ase_lz4(files[i]);
+    }
+#endif
+
+#ifdef USE_SLZ4
     printf("SLZ4\n");
     printf("-------------------------------------------\n");
     print_header();
     for(int i = 0; i < numFiles; ++i) {
         run_slz4(files[i]);
     }
-    #endif
+#endif
 
-#ifdef USE_ZLIB
+//#ifdef USE_ZLIB
+#if 0
     printf("ZLib\n");
     printf("-------------------------------------------\n");
     print_header();
     for(int i = 0; i < numFiles; ++i) {
         run_zlib(files[i]);
+    }
+
+    printf("ZLib Blocksort\n");
+    printf("-------------------------------------------\n");
+    print_header();
+    for(int i = 0; i < numFiles; ++i) {
+        run_zlib_blk(files[i]);
+    }
+#endif
+
+#ifdef USE_ZSTD
+    printf("ZStd\n");
+    printf("-------------------------------------------\n");
+    print_header();
+    for(int i = 0; i < numFiles; ++i) {
+        run_zstd(files[i]);
+    }
+
+    printf("ZStd Blocksort\n");
+    printf("-------------------------------------------\n");
+    print_header();
+    for(int i = 0; i < numFiles; ++i) {
+        run_zstd_blk(files[i]);
     }
 #endif
 
