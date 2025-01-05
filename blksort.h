@@ -33,6 +33,16 @@
 #    endif
 #endif
 
+#ifndef BLKSORT_ALIGN
+#    if defined(_MSC_VER)
+#define BLKSORT_ALIGN(x) __declspec(align(x))
+#    elif defined(__GNUC__) || defined(__clang__)
+#define BLKSORT_ALIGN(x) __attribute__((aligned(x)))
+#    else
+#        error
+#    endif
+#endif
+
 #define BLOCKSORT_DEBUG (0)
 #define BLOCKSORT_PERF (1)
 #define BLOCKSORT_MTF (0)
@@ -95,9 +105,12 @@ private:
 
 #ifdef BLKSORT_IMPLEMENTATION
 #include <cassert>
+#include <cstring>
 
 #include <algorithm>
+#ifdef __AVX__
 #include <immintrin.h>
+#endif
 
 #if BLOCKSORT_PERF
 #    include <chrono>
@@ -184,25 +197,11 @@ namespace
 int32_t strcmp(const uint8_t* x0, const uint8_t* x1, uint32_t depth)
 {
     assert((depth & 15) == 0);
-#if 0
-    for(uint32_t d = 0; d < depth; d += 16) {
-        __m128i m0 = _mm_loadu_si128((const __m128i*)&x0[d]);
-        __m128i m1 = _mm_loadu_si128((const __m128i*)&x1[d]);
-        uint32_t mask0 = (uint32_t)_mm_movemask_epi8(_mm_cmpeq_epi8(m0, m1));
-        if(0xFFFFUL != mask0) {
-            mask0 = (~mask0) & 0xFFFFUL;
-            uint32_t mask1 = (uint32_t)_mm_movemask_epi8(_mm_cmpeq_epi8(m0, _mm_min_epu8(m0, m1)));
-            uint32_t msb0 = bitscan(mask0);
-            return ((mask1 >> msb0) & 0x01U) ? -1 : 1;
-        }
-    }
-#else
     for(uint32_t d = 0; d < depth; ++d) {
         if(x0[d] != x1[d]) {
             return x0[d] < x1[d] ? -1 : 1;
         }
     }
-#endif
     return 0;
 }
 
@@ -350,7 +349,7 @@ void sort(uint32_t size, Item* data, uint32_t depth)
 void counting_sort(uint32_t size, uint16_t* dst, const uint8_t* key, const uint16_t* value)
 {
     assert(0 == (size & 15));
-    alignas(16) uint16_t count[259];
+    BLKSORT_ALIGN(16) uint16_t count[259];
     ::memset(count, 0, 256 * sizeof(uint16_t));
     for(uint32_t i = 0; i < size; i += 4) {
         count[key[i + 0]] += 1;
@@ -536,10 +535,10 @@ void BlkSort::decode_internal(uint8_t* BLKSORT_RESTRICT dst, uint8_t* BLKSORT_RE
 #if 1
     {
         // clang-format off
-        alignas(16) static const uint16_t ID0[8] = {0,1,2,3,4,5,6,7};
-        alignas(16) static const uint16_t ID1[8] = {8,9,10,11,12,13,14,15};
-        alignas(16) static const uint16_t ID2[8] = {16,17,18,19,20,21,22,23};
-        alignas(16) static const uint16_t ID3[8] = {24,25,26,27,28,29,30,31};
+        BLKSORT_ALIGN(16) static const uint16_t ID0[8] = {0,1,2,3,4,5,6,7};
+        BLKSORT_ALIGN(16) static const uint16_t ID1[8] = {8,9,10,11,12,13,14,15};
+        BLKSORT_ALIGN(16) static const uint16_t ID2[8] = {16,17,18,19,20,21,22,23};
+        BLKSORT_ALIGN(16) static const uint16_t ID3[8] = {24,25,26,27,28,29,30,31};
         // clang-format on
 
 #    if 0
@@ -556,23 +555,23 @@ void BlkSort::decode_internal(uint8_t* BLKSORT_RESTRICT dst, uint8_t* BLKSORT_RE
 
         } else
 #    endif
-        {
-            __m128i c0 = _mm_load_si128((const __m128i*)ID0);
-            __m128i c1 = _mm_load_si128((const __m128i*)ID1);
-            __m128i c2 = _mm_load_si128((const __m128i*)ID2);
-            __m128i c3 = _mm_load_si128((const __m128i*)ID3);
-            __m128i add = _mm_set1_epi16(32);
-            for(uint32_t i = 0; i < size_; i += 32) {
-                _mm_store_si128((__m128i*)&id[i], c0);
-                c0 = _mm_adds_epi16(c0, add);
-                _mm_store_si128((__m128i*)&id[i + 8], c1);
-                c1 = _mm_adds_epi16(c1, add);
-                _mm_store_si128((__m128i*)&id[i + 16], c2);
-                c2 = _mm_adds_epi16(c2, add);
-                _mm_store_si128((__m128i*)&id[i + 24], c3);
-                c3 = _mm_adds_epi16(c3, add);
-            }
+#    ifdef __AVX__
+        __m128i c0 = _mm_load_si128((const __m128i*)ID0);
+        __m128i c1 = _mm_load_si128((const __m128i*)ID1);
+        __m128i c2 = _mm_load_si128((const __m128i*)ID2);
+        __m128i c3 = _mm_load_si128((const __m128i*)ID3);
+        __m128i add = _mm_set1_epi16(32);
+        for(uint32_t i = 0; i < size_; i += 32) {
+            _mm_store_si128((__m128i*)&id[i], c0);
+            c0 = _mm_adds_epi16(c0, add);
+            _mm_store_si128((__m128i*)&id[i + 8], c1);
+            c1 = _mm_adds_epi16(c1, add);
+            _mm_store_si128((__m128i*)&id[i + 16], c2);
+            c2 = _mm_adds_epi16(c2, add);
+            _mm_store_si128((__m128i*)&id[i + 24], c3);
+            c3 = _mm_adds_epi16(c3, add);
         }
+#    endif
     }
 #else
     for(uint32_t i = 0; i < Size; i += 4) {
@@ -631,12 +630,11 @@ void BlkSort::decode_internal(uint8_t* BLKSORT_RESTRICT dst, uint8_t* BLKSORT_RE
 
 void BlkSort::mtf_init(uint8_t* BLKSORT_RESTRICT id)
 {
-#if 1
-    static alignas(16) const uint8_t ID0[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    static alignas(16) const uint8_t ID1[16] = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
-    static alignas(16) const uint8_t ID2[16] = {32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    static alignas(16) const uint8_t ID3[16] = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63};
-
+    static BLKSORT_ALIGN(16) const uint8_t ID0[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    static BLKSORT_ALIGN(16) const uint8_t ID1[16] = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
+    static BLKSORT_ALIGN(16) const uint8_t ID2[16] = {32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
+    static BLKSORT_ALIGN(16) const uint8_t ID3[16] = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63};
+#ifdef __AVX__
     __m128i c0 = _mm_load_si128((const __m128i*)ID0);
     __m128i c1 = _mm_load_si128((const __m128i*)ID1);
     __m128i c2 = _mm_load_si128((const __m128i*)ID2);
@@ -664,7 +662,7 @@ void BlkSort::mtf_init(uint8_t* BLKSORT_RESTRICT id)
 
 uint8_t BlkSort::mtf_find(const uint8_t* BLKSORT_RESTRICT table, uint8_t x)
 {
-#if 1
+#ifdef __AVX__
     __m128i c = _mm_set1_epi8(*(char*)&x);
     for(uint32_t i = 0; i < 256; i += 16) {
         __m128i str0 = _mm_load_si128((const __m128i*)&table[i]);
@@ -699,7 +697,7 @@ void BlkSort::mtf_encode(uint32_t size, uint8_t* BLKSORT_RESTRICT data)
     std::chrono::high_resolution_clock::time_point start, end;
     start = std::chrono::high_resolution_clock::now();
 #endif
-    alignas(16) uint8_t table[256];
+    BLKSORT_ALIGN(16) uint8_t table[256];
     mtf_init(table);
 #if BLOCKSORT_PERF
     end = std::chrono::high_resolution_clock::now();
@@ -733,7 +731,7 @@ void BlkSort::mtf_decode(uint32_t size, uint8_t* BLKSORT_RESTRICT data)
     std::chrono::high_resolution_clock::time_point start, end;
     start = std::chrono::high_resolution_clock::now();
 #endif
-    alignas(16) uint8_t table[256];
+    BLKSORT_ALIGN(16) uint8_t table[256];
     mtf_init(table);
 #if BLOCKSORT_PERF
     end = std::chrono::high_resolution_clock::now();

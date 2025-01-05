@@ -1,39 +1,56 @@
-#define CPPRCODER_IMPLEMENTATION
-#include "../cpprcoder.h"
-#define CPPANS_IMPLEMENTATION
-#include "../cppans.h"
-#define CPPASE_IMPLEMENTATION
-#include "../cppase.h"
+//#define USE_RC
+//#define USE_ADAPTIVE
+//#define USE_ANS
+//#define USE_ASE
+#define USE_BLKSORT
+//#define USE_SLZ4
+//#define USE_ZLIB
+//#define USE_ZSTD
+//#define USE_LZ4
 
 #include <chrono>
 #include <fstream>
 #include <memory>
 #include <random>
 
-#include "slz4.h"
-#include "../blksort.h"
-#include "zstd.h"
+#if defined(USE_RC) || defined(USE_ADAPTIVE)
+#define CPPRCODER_IMPLEMENTATION
+#include "../cpprcoder.h"
+#endif
 
+#if defined(USE_ANS)
+#define CPPANS_IMPLEMENTATION
+#include "../cppans.h"
+#endif
+
+#if defined(USE_ASE)
+#define CPPASE_IMPLEMENTATION
+#include "../cppase.h"
+#endif
+
+#if defined(USE_BLKSORT)
+#include "../blksort.h"
+#endif
+
+#if defined(USE_SLZ4)
+#include "slz4.h"
+#endif
+
+#if defined(USE_ZSTD)
+#include "zstd.h"
+#endif
+
+#ifdef USE_ZLIB
 #ifdef _MSC_VER
 #    include <zlib/zlib.h>
 #else
 #    include <zlib.h>
 #endif
-
-#ifdef _MSC_VER
-#    define USE_LZ4
-#    include <lz4/lz4.h>
 #endif
 
-#include <immintrin.h>
-
-#define USE_RC
-#define USE_ADAPTIVE
-#define USE_ANS
-#define USE_ASE
-#define USE_SLZ4
-#define USE_ZLIB
-#define USE_ZSTD
+#ifdef USE_LZ4
+#    include <lz4/lz4.h>
+#endif
 
 class Timer
 {
@@ -758,6 +775,58 @@ void run_ase_lz4(const char* filepath)
 }
 #endif
 
+#ifdef USE_BLKSORT
+void run_blksort(const char* filepath)
+{
+    using namespace blksort;
+    using u8 = uint8_t;
+    using u32 = uint32_t;
+    using u64 = uint64_t;
+    Timer timer;
+    double deflateTime, inflateTime;
+    std::ifstream file(filepath, std::ios::binary);
+    if(!file.is_open()) {
+        return;
+    }
+    file.seekg(0, std::ios::end);
+    u32 size = static_cast<u32>(file.tellg());
+    file.seekg(0, std::ios::beg);
+
+    u8* src = new u8[size];
+    u8* decoded = new u8[size];
+    file.read(reinterpret_cast<char*>(src), size);
+    file.close();
+
+    BlkSort blk;
+    u64 encoded_size = BlkSort::encodeBound(size);
+    u8* encoded = new u8[encoded_size];
+
+    timer.start();
+    blk.encode(size, encoded, src);
+    timer.stop();
+    deflateTime = timer.seconds();
+
+    timer.start();
+    blk.decode(encoded_size, decoded, encoded);
+    timer.stop();
+    inflateTime = timer.seconds();
+
+    double ratio = (double)size / encoded_size;
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    print(filepath, ratio, deflateSpeed, inflateSpeed);
+    for(u32 i = 0; i < size; ++i) {
+        if(decoded[i] != src[i]) {
+            printf("[%d] %d != %d\n", i, decoded[i], src[i]);
+        }
+    }
+    delete[] encoded;
+    delete[] decoded;
+    delete[] src;
+}
+#endif
+
 #ifdef USE_SLZ4
 void run_slz4(const char* filepath)
 {
@@ -1242,7 +1311,14 @@ int main(int /*argc*/, char** /*argv*/)
         run_ase_lz4(files[i]);
     }
 #endif
-
+#ifdef USE_BLKSORT
+    printf("BLKSORT\n");
+    printf("-------------------------------------------\n");
+    print_header();
+    for(int i = 0; i < numFiles; ++i) {
+        run_blksort(files[i]);
+    }
+#endif
 #ifdef USE_SLZ4
     printf("SLZ4\n");
     printf("-------------------------------------------\n");
@@ -1252,8 +1328,7 @@ int main(int /*argc*/, char** /*argv*/)
     }
 #endif
 
-//#ifdef USE_ZLIB
-#if 0
+#ifdef USE_ZLIB
     printf("ZLib\n");
     printf("-------------------------------------------\n");
     print_header();
