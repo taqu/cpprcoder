@@ -1,3 +1,14 @@
+#ifdef _WIN32
+#define USE_RC
+#define USE_ADAPTIVE
+#define USE_ANS
+#define USE_ASE
+#define USE_BLKSORT
+#define USE_SLZ4
+#define USE_ZLIB
+#define USE_ZSTD
+#define USE_LZ4
+#else
 //#define USE_RC
 //#define USE_ADAPTIVE
 //#define USE_ANS
@@ -7,6 +18,7 @@
 //#define USE_ZLIB
 //#define USE_ZSTD
 //#define USE_LZ4
+#endif
 
 #include <chrono>
 #include <fstream>
@@ -786,6 +798,7 @@ void run_blksort(const char* filepath)
     double deflateTime, inflateTime;
     std::ifstream file(filepath, std::ios::binary);
     if(!file.is_open()) {
+        printf("cannot open %s\n", filepath);
         return;
     }
     file.seekg(0, std::ios::end);

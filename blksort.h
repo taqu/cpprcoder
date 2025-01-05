@@ -109,7 +109,13 @@ private:
 
 #include <algorithm>
 #ifdef __AVX__
+#define BLKSORT_AVX (1)
 #include <immintrin.h>
+#endif
+
+#ifdef __ARM_NEON
+#define BLKSORT_NEON (1)
+#include <arm_neon.h>
 #endif
 
 #if BLOCKSORT_PERF
@@ -261,7 +267,7 @@ void heapsort(uint32_t n, Item* v, uint32_t depth)
 
 void mqsort(uint32_t size, Item* data, uint32_t d, uint32_t depth, int32_t level)
 {
-    static constexpr uint32_t SwitchN = 17;
+    static constexpr uint32_t SwitchN = 37;
     if(level <= 0) {
         heapsort(size, data, depth);
         return;
@@ -337,12 +343,16 @@ void mqsort(uint32_t size, Item* data, uint32_t d, uint32_t depth, int32_t level
 
 void sort(uint32_t size, Item* data, uint32_t depth)
 {
+#if 0
     int32_t level = 0;
     uint32_t t = size;
     while(1 < t) {
         ++level;
         t >>= 1;
     }
+#else
+    const int32_t level = 11;
+#endif
     mqsort(size, data, 0, depth, level);
 }
 
@@ -532,8 +542,7 @@ void BlkSort::decode_internal(uint8_t* BLKSORT_RESTRICT dst, uint8_t* BLKSORT_RE
     start = std::chrono::high_resolution_clock::now();
 #endif
     uint16_t* id = (uint16_t*)buffer_;
-#if 1
-    {
+#if defined(BLKSORT_AVX)
         // clang-format off
         BLKSORT_ALIGN(16) static const uint16_t ID0[8] = {0,1,2,3,4,5,6,7};
         BLKSORT_ALIGN(16) static const uint16_t ID1[8] = {8,9,10,11,12,13,14,15};
@@ -554,8 +563,7 @@ void BlkSort::decode_internal(uint8_t* BLKSORT_RESTRICT dst, uint8_t* BLKSORT_RE
             }
 
         } else
-#    endif
-#    ifdef __AVX__
+#else
         __m128i c0 = _mm_load_si128((const __m128i*)ID0);
         __m128i c1 = _mm_load_si128((const __m128i*)ID1);
         __m128i c2 = _mm_load_si128((const __m128i*)ID2);
@@ -572,13 +580,35 @@ void BlkSort::decode_internal(uint8_t* BLKSORT_RESTRICT dst, uint8_t* BLKSORT_RE
             c3 = _mm_adds_epi16(c3, add);
         }
 #    endif
+#elif defined(BLKSORT_NEON)
+    // clang-format off
+    BLKSORT_ALIGN(16) static const uint16_t ID0[8] = {0,1,2,3,4,5,6,7};
+    BLKSORT_ALIGN(16) static const uint16_t ID1[8] = {8,9,10,11,12,13,14,15};
+    BLKSORT_ALIGN(16) static const uint16_t ID2[8] = {16,17,18,19,20,21,22,23};
+    BLKSORT_ALIGN(16) static const uint16_t ID3[8] = {24,25,26,27,28,29,30,31};
+    // clang-format on
+    uint16x8_t c0 = vld1q_u16(ID0);
+    uint16x8_t c1 = vld1q_u16(ID1);
+    uint16x8_t c2 = vld1q_u16(ID2);
+    uint16x8_t c3 = vld1q_u16(ID3);
+    uint16x8_t add = vmovq_n_u16(32);
+    for(uint32_t i = 0; i < size_; i += 32) {
+        vst1q_u16(&id[i], c0);
+        c0 = vaddq_u16(c0, add);
+        vst1q_u16(&id[i + 8], c1);
+        c1 = vaddq_u16(c1, add);
+        vst1q_u16(&id[i + 16], c2);
+        c2 = vaddq_u16(c2, add);
+        vst1q_u16(&id[i + 24], c3);
+        c3 = vaddq_u16(c3, add);
     }
+
 #else
-    for(uint32_t i = 0; i < Size; i += 4) {
-        id[i + 0] = i + 0;
-        id[i + 1] = i + 1;
-        id[i + 2] = i + 2;
-        id[i + 3] = i + 3;
+    for(uint32_t i = 0; i < size_; i+=4) {
+        id[i+0] = i+0;
+        id[i+1] = i+1;
+        id[i+2] = i+2;
+        id[i+3] = i+3;
     }
 #endif
 
@@ -634,7 +664,7 @@ void BlkSort::mtf_init(uint8_t* BLKSORT_RESTRICT id)
     static BLKSORT_ALIGN(16) const uint8_t ID1[16] = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
     static BLKSORT_ALIGN(16) const uint8_t ID2[16] = {32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
     static BLKSORT_ALIGN(16) const uint8_t ID3[16] = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63};
-#ifdef __AVX__
+#ifdef BLKSORT_AVX
     __m128i c0 = _mm_load_si128((const __m128i*)ID0);
     __m128i c1 = _mm_load_si128((const __m128i*)ID1);
     __m128i c2 = _mm_load_si128((const __m128i*)ID2);
@@ -662,7 +692,7 @@ void BlkSort::mtf_init(uint8_t* BLKSORT_RESTRICT id)
 
 uint8_t BlkSort::mtf_find(const uint8_t* BLKSORT_RESTRICT table, uint8_t x)
 {
-#ifdef __AVX__
+#ifdef BLKSORT_AVX
     __m128i c = _mm_set1_epi8(*(char*)&x);
     for(uint32_t i = 0; i < 256; i += 16) {
         __m128i str0 = _mm_load_si128((const __m128i*)&table[i]);
