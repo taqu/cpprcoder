@@ -235,11 +235,12 @@ void heapsort(uint32_t n, Item* v, uint32_t depth)
     --v; // set index = 1
     int32_t i, j;
     Item x;
-    for(int32_t k = n >> 1; k >= 1; --k) {
+	int32_t in = static_cast<int32_t>(n);
+    for(int32_t k = in >> 1; k >= 1; --k) {
         i = k;
         x = v[k];
-        while((j = i << 1) <= n) {
-            if(j < n && less(v[j].str_, v[j + 1].str_, depth)) {
+        while((j = i << 1) <= in) {
+            if(j < in && less(v[j].str_, v[j + 1].str_, depth)) {
                 ++j;
             }
 
@@ -252,13 +253,13 @@ void heapsort(uint32_t n, Item* v, uint32_t depth)
         v[i] = x;
     }
 
-    while(n > 1) {
-        x = v[n];
-        v[n] = v[1];
-        --n;
+    while(in > 1) {
+        x = v[in];
+        v[in] = v[1];
+        --in;
         i = 1;
-        while((j = i << 1) <= n) {
-            if(j < n && less(v[j].str_, v[j + 1].str_, depth)) {
+        while((j = i << 1) <= in) {
+            if(j < in && less(v[j].str_, v[j + 1].str_, depth)) {
                 ++j;
             }
 
@@ -465,7 +466,7 @@ void BlkSort::encode_internal(uint8_t* BLKSORT_RESTRICT dst, const uint8_t* BLKS
 
     Item* strings = (Item*)(buffer_ + size_ + size_);
     {
-        for(int32_t i = 0; i < size_; i += 8) {
+        for(uint16_t i = 0; i < size_; i += 8) {
             strings[i + 0].id_ = i + 0;
             strings[i + 1].id_ = i + 1;
             strings[i + 2].id_ = i + 2;
@@ -512,7 +513,7 @@ void BlkSort::encode_internal(uint8_t* BLKSORT_RESTRICT dst, const uint8_t* BLKS
     start = std::chrono::high_resolution_clock::now();
 #endif
     uint16_t pos = 0;
-    for(uint32_t i = 0; i < size_; ++i) {
+    for(uint16_t i = 0; i < size_; ++i) {
         dst[i] = strings[i].str_[size_ - 1];
         if(0 == strings[i].id_) {
             assert(0 == ::memcmp(strings[i].str_, data, size_));
@@ -605,7 +606,7 @@ void BlkSort::decode_internal(uint8_t* BLKSORT_RESTRICT dst, uint8_t* BLKSORT_RE
     }
 
 #else
-    for(uint32_t i = 0; i < size_; i += 4) {
+    for(uint16_t i = 0; i < size_; i += 4) {
         id[i + 0] = i + 0;
         id[i + 1] = i + 1;
         id[i + 2] = i + 2;
@@ -683,10 +684,10 @@ void BlkSort::mtf_init(uint8_t* BLKSORT_RESTRICT id)
     }
 #else
     for(uint32_t i = 0; i < 256; i += 4) {
-        id[i + 0] = i + 0;
-        id[i + 1] = i + 1;
-        id[i + 2] = i + 2;
-        id[i + 3] = i + 3;
+        id[i + 0] = static_cast<uint8_t>(i + 0);
+        id[i + 1] = static_cast<uint8_t>(i + 1);
+        id[i + 2] = static_cast<uint8_t>(i + 2);
+        id[i + 3] = static_cast<uint8_t>(i + 3);
     }
 #endif
 }
