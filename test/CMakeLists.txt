@@ -5,19 +5,35 @@ set(CMAKE_CONFIGURATION_TYPES "Debug" "Release")
 set(PROJECTNAME TestRangeCoder)
 project(${PROJECTNAME})
 
-set(HEADERS "../cpprcoder.h;slz4.h;../cppans.h;../cppase.h;../blksort.h")
-set(SOURCES "main.cpp;slz4.cpp;../blksort.cpp")
+set(FSE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../fse)
+set(FSE_HEADERS
+   ${FSE_DIR}/bitstream.h
+   ${FSE_DIR}/compiler.h
+   ${FSE_DIR}/huf.h
+   ${FSE_DIR}/hist.h
+   ${FSE_DIR}/huf2.h
+)
+set(FSE_SOURCES
+   ${FSE_DIR}/huf_compress.c
+   ${FSE_DIR}/huf_decompress.c
+   ${FSE_DIR}/hist.c
+   ${FSE_DIR}/huf2.c
+)
+
+set(HEADERS "../cpprcoder.h;slz4.h;../cppans.h;../cppase.h;../blksort.h;../rans.h")
+set(SOURCES "main.cpp;slz4.cpp;../blksort.cpp;../rans.cpp")
 
 include_directories(AFTER ${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(AFTER ${CMAKE_CURRENT_SOURCE_DIR}/zstd/include)
+include_directories(AFTER ${CMAKE_CURRENT_SOURCE_DIR}/../fse)
 link_directories("zlib")
 link_directories("lz4")
 link_directories("zstd/static")
 
-source_group("include" FILES ${HEADERS})
-source_group("src" FILES ${SOURCES})
+source_group("include" FILES ${HEADERS} ${FSE_HEADERS})
+source_group("src" FILES ${SOURCES} ${FSE_SOURCES})
 
-set(FILES ${HEADERS} ${SOURCES})
+set(FILES ${HEADERS} ${SOURCES} ${FSE_HEADERS} ${FSE_SOURCES})
 
 set(OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG "${OUTPUT_DIRECTORY}")

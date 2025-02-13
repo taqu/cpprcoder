@@ -502,13 +502,99 @@ u32 rANS::encode(u32 dst_size, u8* dst, u32 src_size, const u8* src)
     assert(nullptr != src);
 
     u32 freqs[256];
-    count(freqs, src_size, src);
+    {
+        ::memset(freqs, 0, 256 * sizeof(u32));
+        u32 s = src_size & ~0x0FUL;
+        for(u32 i = 0; i < s; i += 16) {
+            ++freqs[src[i + 0]];
+            ++freqs[src[i + 1]];
+            ++freqs[src[i + 2]];
+            ++freqs[src[i + 3]];
+            ++freqs[src[i + 4]];
+            ++freqs[src[i + 5]];
+            ++freqs[src[i + 6]];
+            ++freqs[src[i + 7]];
+
+            ++freqs[src[i + 8]];
+            ++freqs[src[i + 9]];
+            ++freqs[src[i + 10]];
+            ++freqs[src[i + 11]];
+            ++freqs[src[i + 12]];
+            ++freqs[src[i + 13]];
+            ++freqs[src[i + 14]];
+            ++freqs[src[i + 15]];
+        }
+        for(u32 i = s; i < src_size; ++i) {
+            ++freqs[src[i]];
+        }
+    }
+
     u32 cum_freqs[257];
-    cumulative(cum_freqs, freqs);
-    normalize(freqs, cum_freqs, ProbScale);
+    {
+        cum_freqs[0] = 0;
+        for(u32 i = 0; i < 256; ++i) {
+            cum_freqs[i + 1] = cum_freqs[i] + freqs[i];
+        }
+    }
+
+    // Normalize
+    {
+        u32 current_total = cum_freqs[256];
+        for(u32 i = 1; i < 257; ++i) {
+            cum_freqs[i] = (ProbScale * cum_freqs[i]) / current_total;
+        }
+        for(u32 i = 0; i < 256; ++i) {
+            if(freqs[i] && cum_freqs[i + 1] == cum_freqs[i]) {
+                u32 best_freq = ~0UL;
+                s32 best_steal = -1;
+                for(s32 j = 0; j < 256; ++j) {
+                    u32 freq = cum_freqs[j + 1] - cum_freqs[j];
+                    if(1 < freq && freq < best_freq) {
+                        best_freq = freq;
+                        best_steal = j;
+                    }
+                }
+                assert(-1 != best_steal);
+                if(static_cast<u32>(best_steal) < i) {
+                    for(s32 j = best_steal + 1; j <= i; ++j) {
+                        --cum_freqs[j];
+                    }
+                } else {
+                    assert(i < best_steal);
+                    for(s32 j = i + 1; j <= best_steal; ++j) {
+                        ++cum_freqs[j];
+                    }
+                }
+            }
+        }
+        for(u32 i = 0; i < 256; ++i) {
+#    if _DEBUG
+            if(0 == freqs[i]) {
+                assert(cum_freqs[i] == cum_freqs[i + 1]);
+            } else {
+                assert(cum_freqs[i] < cum_freqs[i + 1]);
+            }
+#    endif
+            freqs[i] = cum_freqs[i + 1] - cum_freqs[i];
+        }
+    }
     EncSymbol symbols[256];
     for(u32 i = 0; i < 256; ++i) {
-        init(symbols[i], cum_freqs[i], freqs[i], ProbBits);
+        symbols[i].x_max_ = ((rANS::rANSByteLowBounds >> ProbBits) << 8) * freqs[i];
+        symbols[i].cmpl_freq_ = static_cast<u16>((1 << ProbBits) - freqs[i]);
+        if(freqs[i] < 2) {
+            symbols[i].rcp_freq_ = ~0u;
+            symbols[i].rcp_shift_ = 0;
+            symbols[i].bias_ = cum_freqs[i] + (1 << ProbBits) - 1;
+        } else {
+            u32 shift = 0;
+            while(freqs[i] > (1UL << shift)) {
+                shift++;
+            }
+            symbols[i].rcp_freq_ = static_cast<u32>(((1ULL << (shift + 31)) + freqs[i] - 1) / freqs[i]);
+            symbols[i].rcp_shift_ = shift - 1;
+            symbols[i].bias_ = cum_freqs[i];
+        }
     }
     State rans;
     init(rans);
