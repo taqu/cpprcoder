@@ -14,8 +14,11 @@ set(FSE_HEADERS
    ${FSE_DIR}/huf2.h
 )
 set(FSE_SOURCES
+   ${FSE_DIR}/entropy_common.c
    ${FSE_DIR}/huf_compress.c
    ${FSE_DIR}/huf_decompress.c
+   ${FSE_DIR}/fse_compress.c
+   ${FSE_DIR}/fse_decompress.c
    ${FSE_DIR}/hist.c
    ${FSE_DIR}/huf2.c
 )
@@ -60,7 +63,7 @@ if(MSVC)
     set(CMAKE_CXX_FLAGS_RELEASE "/MT /O2 /GL /GR- /DNDEBUG")
     target_link_libraries(${PROJECTNAME} "zlibstat.lib")
     target_link_libraries(${PROJECTNAME} "liblz4_static.lib")
-    target_link_libraries(${PROJECTNAME} ZSTD)
+    #target_link_libraries(${PROJECTNAME} ZSTD)
 
 elseif(UNIX)
     if(USE_SIMD)

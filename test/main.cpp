@@ -1,23 +1,24 @@
 #ifdef _WIN32
-#define USE_RC
-#define USE_ADAPTIVE
-#define USE_ANS
-#define USE_ASE
-#define USE_BLKSORT
-#define USE_SLZ4
-#define USE_ZLIB
-#define USE_ZSTD
-#define USE_LZ4
+// #define USE_RC
+#    define USE_ADAPTIVE
+// #define USE_ANS
+// #define USE_ASE
+// #define USE_BLKSORT
+// #define USE_SLZ4
+#    define USE_HUFF
+#    define USE_ZLIB
+// #define USE_ZSTD
+#    define USE_LZ4
 #else
-//#define USE_RC
-//#define USE_ADAPTIVE
-//#define USE_ANS
-//#define USE_ASE
-#define USE_BLKSORT
-//#define USE_SLZ4
-//#define USE_ZLIB
-//#define USE_ZSTD
-//#define USE_LZ4
+// #define USE_RC
+// #define USE_ADAPTIVE
+// #define USE_ANS
+// #define USE_ASE
+#    define USE_BLKSORT
+// #define USE_SLZ4
+// #define USE_ZLIB
+// #define USE_ZSTD
+// #define USE_LZ4
 #endif
 
 #include <chrono>
@@ -26,42 +27,46 @@
 #include <random>
 
 #if defined(USE_RC) || defined(USE_ADAPTIVE)
-#define CPPRCODER_IMPLEMENTATION
-#include "../cpprcoder.h"
+#    define CPPRCODER_IMPLEMENTATION
+#    include "../cpprcoder.h"
 #endif
 
 #if defined(USE_ANS)
-#define CPPANS_IMPLEMENTATION
-#include "../cppans.h"
+#    define CPPANS_IMPLEMENTATION
+#    include "../cppans.h"
 #endif
 
 #if defined(USE_ASE)
-#define CPPASE_IMPLEMENTATION
-#include "../cppase.h"
+#    define CPPASE_IMPLEMENTATION
+#    include "../cppase.h"
 #endif
 
 #if defined(USE_BLKSORT)
-#include "../blksort.h"
+#    include "../blksort.h"
+#endif
+
+#if defined(USE_HUFF)
+#    include "huf2.h"
 #endif
 
 #if defined(USE_SLZ4)
-#include "slz4.h"
+#    include "slz4.h"
 #endif
 
 #if defined(USE_ZSTD)
-#include "zstd.h"
+#    include "zstd.h"
 #endif
 
 #ifdef USE_ZLIB
-#ifdef _MSC_VER
-#    include <zlib/zlib.h>
-#else
-#    include <zlib.h>
-#endif
+#    ifdef _MSC_VER
+#        include <zlib/zlib.h>
+#    else
+#        include <zlib.h>
+#    endif
 #endif
 
 #ifdef USE_LZ4
-#    include <lz4/lz4.h>
+#    include <lz4/lz4hc.h>
 #endif
 
 class Timer
@@ -644,7 +649,7 @@ void run_ase_zlib(const char* filepath)
     timer.stop();
     deflateTime = timer.seconds();
 
-    //zlib
+    // zlib
     cpprcoder::MemoryStream encstream(result0);
     cpprcoder::MemoryStream decstream(result0);
 
@@ -663,11 +668,11 @@ void run_ase_zlib(const char* filepath)
     }
     timer.stop();
     inflateTime = timer.seconds();
-    assert(decstream.size()==result0);
+    assert(decstream.size() == result0);
     for(cpprcoder::u32 i = 0; i < result0; ++i) {
         assert(decstream[i] == encoded[i]);
     }
-    //zlib
+    // zlib
 
     timer.start();
     u32 result1 = ase.decode(result0, size, decoded, encoded);
@@ -732,7 +737,7 @@ void run_ase_lz4(const char* filepath)
     timer.stop();
     deflateTime = timer.seconds();
 
-    //lz4
+    // lz4
     cpprcoder::MemoryStream encstream(result0 * 2);
     encstream.resize(result0 * 2);
     cpprcoder::MemoryStream decstream(result0);
@@ -753,11 +758,11 @@ void run_ase_lz4(const char* filepath)
     }
     timer.stop();
     inflateTime = timer.seconds();
-    assert(decstream.size()==result0);
+    assert(decstream.size() == result0);
     for(cpprcoder::u32 i = 0; i < result0; ++i) {
         assert(decstream[i] == encoded[i]);
     }
-    //lz4
+    // lz4
 
     timer.start();
     u32 result1 = ase.decode(result0, size, decoded, encoded);
@@ -896,6 +901,140 @@ void run_slz4(const char* filepath)
 }
 #endif
 
+#ifdef USE_HUFF
+void run_huff(const char* filepath)
+{
+    Timer timer;
+    double deflateTime, inflateTime;
+
+    std::ifstream file(filepath, std::ios::binary);
+    if(!file.is_open()) {
+        return;
+    }
+    file.seekg(0, std::ios::end);
+    uint32_t size = static_cast<uint32_t>(file.tellg());
+    file.seekg(0, std::ios::beg);
+
+    uint8_t* src = new uint8_t[size];
+    file.read(reinterpret_cast<char*>(src), size);
+    file.close();
+
+    uint8_t* dst = new uint8_t[size];
+
+    size_t compressedSize = HUF_compressBlocksBound(size);
+    uint8_t* compressed = new uint8_t[compressedSize];
+
+    timer.start();
+    size_t result = HUF_compressBlocks(compressed, compressedSize, src, size);
+    if(result <= 0) {
+        printf("Error in def_huff\n");
+        delete[] compressed;
+        delete[] dst;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    deflateTime = timer.seconds();
+
+    timer.start();
+    size_t decompressed = HUF_decompressBlocks(dst, size, compressed, result);
+    if(decompressed <= 0) {
+        printf("Error in inf_huff\n");
+        delete[] compressed;
+        delete[] dst;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    inflateTime = timer.seconds();
+
+    for(int i = 0; i < size; ++i) {
+        if(src[i] != dst[i]) {
+            printf("Error: %d != %d\n", src[i], dst[i]);
+            delete[] compressed;
+            delete[] dst;
+            delete[] src;
+            return;
+        }
+    }
+    double ratio = (double)size / result;
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    print(filepath, ratio, deflateSpeed, inflateSpeed);
+    delete[] compressed;
+    delete[] dst;
+    delete[] src;
+}
+
+void test_huff()
+{
+    Timer timer;
+    double deflateTime, inflateTime;
+
+    std::mt19937 engine;
+    {
+        //std::random_device device;
+        //engine.seed(device());
+        engine.seed(1234);
+    }
+    for(uint32_t i = 0; i < 100; ++i) {
+        uint32_t size = (engine() % (16 * 1024 * 1024)) + 1024;
+        uint8_t* src = new uint8_t[size];
+        for(uint32_t j = 0; j < size; ++j) {
+            src[j] = (uint8_t)engine();
+        }
+
+        uint8_t* dst = new uint8_t[size];
+
+        size_t compressedSize = HUF_compressBlocksBound(size);
+        uint8_t* compressed = new uint8_t[compressedSize];
+
+        timer.start();
+        size_t result = HUF_compressBlocks(compressed, compressedSize, src, size);
+        if(result <= 0) {
+            printf("Error in def_huff\n");
+            delete[] compressed;
+            delete[] dst;
+            delete[] src;
+            return;
+        }
+        timer.stop();
+        deflateTime = timer.seconds();
+
+        timer.start();
+        size_t decompressed = HUF_decompressBlocks(dst, size, compressed, result);
+        if(decompressed <= 0) {
+            printf("Error in inf_huff\n");
+            delete[] compressed;
+            delete[] dst;
+            delete[] src;
+            return;
+        }
+        timer.stop();
+        inflateTime = timer.seconds();
+
+        for(int i = 0; i < size; ++i) {
+            if(src[i] != dst[i]) {
+                assert(false);
+                printf("Error: %d != %d\n", src[i], dst[i]);
+                delete[] compressed;
+                delete[] dst;
+                delete[] src;
+                return;
+            }
+        }
+        double ratio = (double)size / result;
+        double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+        double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+        // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+        delete[] compressed;
+        delete[] dst;
+        delete[] src;
+    }
+}
+#endif
+
 #ifdef USE_ZLIB
 void run_zlib(const char* filepath)
 {
@@ -941,6 +1080,7 @@ void run_zlib(const char* filepath)
     delete[] src;
 }
 
+#    if defined(USE_BLKSORT)
 void run_zlib_blk(const char* filepath)
 {
     Timer timer;
@@ -966,9 +1106,9 @@ void run_zlib_blk(const char* filepath)
     cpprcoder::MemoryStream decstream(size);
 
     timer.start();
-    //blocksort
-    blksort.encode(size,encoded,src);
-    //zlib
+    // blocksort
+    blksort.encode(size, encoded, src);
+    // zlib
     if(def_zlib(encstream, encoded_size, encoded) < 0) {
         delete[] src;
         return;
@@ -977,17 +1117,17 @@ void run_zlib_blk(const char* filepath)
     deflateTime = timer.seconds();
 
     timer.start();
-    //zlib
+    // zlib
     if(inf_zlib(decstream, encstream.size(), &encstream[0]) < 0) {
         delete[] src;
         return;
     }
-    //blocksort
-    blksort.decode(encoded_size,decoded, &decstream[0]);
+    // blocksort
+    blksort.decode(encoded_size, decoded, &decstream[0]);
     timer.stop();
     inflateTime = timer.seconds();
 
-    for(uint32_t i=0; i<size; ++i){
+    for(uint32_t i = 0; i < size; ++i) {
         assert(decoded[i] == src[i]);
     }
 
@@ -1000,6 +1140,7 @@ void run_zlib_blk(const char* filepath)
     delete[] decoded;
     delete[] encoded;
 }
+#    endif
 #endif
 
 #ifdef USE_ZSTD
@@ -1041,8 +1182,8 @@ void run_zstd(const char* filepath)
     }
     inflateTime = timer.seconds();
 
-    for(uint32_t i=0; i<size; ++i){
-        assert(decoded[i]==src[i]);
+    for(uint32_t i = 0; i < size; ++i) {
+        assert(decoded[i] == src[i]);
     }
     double ratio = (double)size / encodedActual;
     double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
@@ -1054,6 +1195,7 @@ void run_zstd(const char* filepath)
     delete[] src;
 }
 
+#    if defined(USE_BLKSORT)
 void run_zstd_blk(const char* filepath)
 {
     Timer timer;
@@ -1080,8 +1222,8 @@ void run_zstd_blk(const char* filepath)
     cpprcoder::u8* decoded2 = new cpprcoder::u8[size];
 
     timer.start();
-    //blocksort
-    blksort.encode(size,encoded2,src);
+    // blocksort
+    blksort.encode(size, encoded2, src);
 
     cpprcoder::s32 encodedActual = def_zstd(encodedSize, encoded, encodedSize2, encoded2);
     timer.stop();
@@ -1093,7 +1235,7 @@ void run_zstd_blk(const char* filepath)
 
     timer.start();
     cpprcoder::s32 decodedActual = inf_zstd(encodedSize2, decoded, encodedActual, encoded);
-    //blocksort
+    // blocksort
     blksort.decode(decodedActual, decoded2, decoded);
     timer.stop();
     if(decodedActual < 0) {
@@ -1102,8 +1244,8 @@ void run_zstd_blk(const char* filepath)
     }
     inflateTime = timer.seconds();
 
-    for(uint32_t i=0; i<size; ++i){
-        assert(decoded2[i]==src[i]);
+    for(uint32_t i = 0; i < size; ++i) {
+        assert(decoded2[i] == src[i]);
     }
     double ratio = (double)size / encodedActual;
     double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
@@ -1116,6 +1258,7 @@ void run_zstd_blk(const char* filepath)
     delete[] encoded;
     delete[] src;
 }
+#    endif
 #endif
 
 #ifdef USE_LZ4
@@ -1164,6 +1307,73 @@ void run_lz4(const char* filepath)
     print(filepath, ratio, deflateSpeed, inflateSpeed);
     delete[] src;
 }
+
+#    ifdef USE_HUFF
+void run_lz4_huff(const char* filepath)
+{
+    Timer timer;
+    double deflateTime, inflateTime;
+
+    std::ifstream file(filepath, std::ios::binary);
+    if(!file.is_open()) {
+        return;
+    }
+    file.seekg(0, std::ios::end);
+    cpprcoder::u32 size = static_cast<cpprcoder::u32>(file.tellg());
+    file.seekg(0, std::ios::beg);
+
+    cpprcoder::u8* src = new cpprcoder::u8[size];
+    file.read(reinterpret_cast<char*>(src), size);
+    file.close();
+
+    int32_t lz4Bound = LZ4_compressBound(size);
+    size_t hufBound = HUF_compressBlocksBound((size_t)lz4Bound);
+    uint8_t* dst = new uint8_t[lz4Bound];
+    uint8_t* uncompressed = new uint8_t[hufBound];
+
+    timer.start();
+    int32_t r;
+    r = LZ4_compress_HC((const char*)src, (char*)dst, (int32_t)size, lz4Bound, 9);
+    if(r <= 0) {
+        delete[] dst;
+        delete[] src;
+        return;
+    }
+    size_t compressedSize = HUF_compressBlocksBound((size_t)r);
+    uint8_t* compressed = new uint8_t[compressedSize];
+
+    size_t r2 = (int32_t)HUF_compressBlocks(compressed, compressedSize, dst, (size_t)r);
+    timer.stop();
+    deflateTime = timer.seconds();
+    if(r <= 0) {
+        delete[] compressed;
+        delete[] dst;
+        delete[] src;
+        return;
+    }
+
+    timer.start();
+    HUF_decompressBlocks(uncompressed, (size_t)r, compressed, r2);
+    r = LZ4_decompress_safe((const char*)compressed, (char*)uncompressed, r, size);
+    if(r <= 0) {
+        delete[] compressed;
+        delete[] dst;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    inflateTime = timer.seconds();
+
+    double ratio = (double)size / r2;
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    print(filepath, ratio, deflateSpeed, inflateSpeed);
+    delete[] compressed;
+    delete[] dst;
+    delete[] src;
+}
+#    endif
 #endif
 
 #ifdef USE_RC
@@ -1236,7 +1446,6 @@ bool test_adaptive()
     return true;
 }
 #endif
-
 
 int main(int /*argc*/, char** /*argv*/)
 {
@@ -1341,6 +1550,17 @@ int main(int /*argc*/, char** /*argv*/)
     }
 #endif
 
+#ifdef USE_HUFF
+    printf("HUFF0\n");
+    printf("-------------------------------------------\n");
+    print_header();
+    test_huff();
+    for(int i = 0; i < numFiles; ++i) {
+        run_huff(files[i]);
+    }
+    test_huff();
+#endif
+
 #ifdef USE_ZLIB
     printf("ZLib\n");
     printf("-------------------------------------------\n");
@@ -1348,13 +1568,14 @@ int main(int /*argc*/, char** /*argv*/)
     for(int i = 0; i < numFiles; ++i) {
         run_zlib(files[i]);
     }
-
+#    if defined(USE_BLKSORT)
     printf("ZLib Blocksort\n");
     printf("-------------------------------------------\n");
     print_header();
     for(int i = 0; i < numFiles; ++i) {
         run_zlib_blk(files[i]);
     }
+#    endif
 #endif
 
 #ifdef USE_ZSTD
@@ -1364,13 +1585,14 @@ int main(int /*argc*/, char** /*argv*/)
     for(int i = 0; i < numFiles; ++i) {
         run_zstd(files[i]);
     }
-
+#    if defined(USE_BLKSORT)
     printf("ZStd Blocksort\n");
     printf("-------------------------------------------\n");
     print_header();
     for(int i = 0; i < numFiles; ++i) {
         run_zstd_blk(files[i]);
     }
+#    endif
 #endif
 
 #ifdef USE_LZ4
@@ -1380,6 +1602,15 @@ int main(int /*argc*/, char** /*argv*/)
     for(int i = 0; i < numFiles; ++i) {
         run_lz4(files[i]);
     }
+//#    ifdef USE_HUFF
+#if 0
+    printf("LZ4 Huff\n");
+    printf("-------------------------------------------\n");
+    print_header();
+    for(int i = 0; i < numFiles; ++i) {
+        run_lz4_huff(files[i]);
+    }
+#    endif
 #endif
     return 0;
 }
