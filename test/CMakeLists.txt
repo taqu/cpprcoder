@@ -12,6 +12,7 @@ set(FSE_HEADERS
    ${FSE_DIR}/huf.h
    ${FSE_DIR}/hist.h
    ${FSE_DIR}/huf2.h
+   ${FSE_DIR}/fse.h
 )
 set(FSE_SOURCES
    ${FSE_DIR}/entropy_common.c

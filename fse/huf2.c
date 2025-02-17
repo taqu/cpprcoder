@@ -19,7 +19,7 @@ extern "C"
         return num_blocks * (sizeof(HUF_BlockHeader) + block_bound) + sizeof(HUF_Header) + upper_bits;
     }
 
-    void HUF_set_header(uint32_t index, HUF_BlockHeader* headers, uint8_t* upper_bits, uint32_t original, uint32_t compressed)
+    inline static void HUF_set_header(uint32_t index, HUF_BlockHeader* headers, uint8_t* upper_bits, uint32_t original, uint32_t compressed)
     {
         assert(0<original && original <= (1UL << 17));
         assert(0<compressed && compressed <= (1UL << 17));
@@ -33,18 +33,18 @@ extern "C"
         upper_bits[i] |= (compressed >> 15) << offset;
     }
 
-    void HUF_get_header(uint32_t index, uint32_t* original, uint32_t* compressed, const HUF_BlockHeader* headers, const uint8_t* upper_bits)
+    inline static void HUF_get_header(uint32_t index, uint32_t* original, uint32_t* compressed, const HUF_BlockHeader* headers, const uint8_t* upper_bits)
     {
         *original = headers[index].size_ & ((1UL<<17)-1);
         *original += 1;
         *compressed = headers[index].size_ >> 17;
-        *compressed += 1;
 
         index <<= 1;
         uint32_t i = index >> 3;
         uint32_t offset = index - (i << 3);
         uint32_t bits = (upper_bits[i]>>offset) & 0x3UL;
         *compressed |= bits<<15;
+        *compressed += 1;
     }
 
     uint32_t HUF_compressBlocks(void* dst, uint32_t dstCapacity, const void* src, uint32_t srcSize)
@@ -135,19 +135,6 @@ extern "C"
             d += osize;
         }
         return (uint32_t)(d - (uint8_t*)dst) == originalSize ? originalSize : 0;
-    }
-
-    uint32_t HUF_decompressBlocksWorkSize(uint32_t size)
-    {
-        uint32_t num_blocks = (size + ((1UL << 17) - 1)) >> 17;
-        uint32_t block_bound = HUF_compressBound(HUF_BLOCKSIZE_MAX);
-        uint32_t upper_bits = (2 * num_blocks + 0x07UL) >> 3;
-        return num_blocks * sizeof(HUF_BlockHeader) + sizeof(HUF_Header) + upper_bits;
-    }
-
-    uint32_t HUF_compressBlocksInplace(void* src, uint32_t srcSize, void* work)
-    {
-        return 0;
     }
 
 #if defined(__cplusplus)

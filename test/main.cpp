@@ -1,11 +1,12 @@
 #ifdef _WIN32
 // #define USE_RC
-#    define USE_ADAPTIVE
+// #define USE_ADAPTIVE
 // #define USE_ANS
 // #define USE_ASE
 // #define USE_BLKSORT
 // #define USE_SLZ4
 #    define USE_HUFF
+#define USE_FSE
 #    define USE_ZLIB
 // #define USE_ZSTD
 #    define USE_LZ4
@@ -26,7 +27,8 @@
 #include <memory>
 #include <random>
 
-#if defined(USE_RC) || defined(USE_ADAPTIVE)
+//#if defined(USE_RC) || defined(USE_ADAPTIVE)
+#if 1
 #    define CPPRCODER_IMPLEMENTATION
 #    include "../cpprcoder.h"
 #endif
@@ -47,6 +49,10 @@
 
 #if defined(USE_HUFF)
 #    include "huf2.h"
+#endif
+
+#if defined(USE_FSE)
+#include "fse.h"
 #endif
 
 #if defined(USE_SLZ4)
@@ -241,7 +247,7 @@ cpprcoder::s32 inf_zstd(cpprcoder::u32 dstSize, cpprcoder::u8* dst, cpprcoder::u
 #ifdef USE_LZ4
 int def_lz4(cpprcoder::MemoryStream& outStream, cpprcoder::u32 srcSize, cpprcoder::u8* src)
 {
-    cpprcoder::s32 result = LZ4_compress_default(reinterpret_cast<char*>(src), reinterpret_cast<char*>(&outStream[0]), srcSize, outStream.size());
+    cpprcoder::s32 result = LZ4_compress_HC(reinterpret_cast<char*>(src), reinterpret_cast<char*>(&outStream[0]), srcSize, outStream.size(), 9);
     if(0 <= result) {
         outStream.resize(result);
     }
@@ -974,9 +980,8 @@ void test_huff()
 
     std::mt19937 engine;
     {
-        //std::random_device device;
-        //engine.seed(device());
-        engine.seed(1234);
+        std::random_device device;
+        engine.seed(device());
     }
     for(uint32_t i = 0; i < 100; ++i) {
         uint32_t size = (engine() % (16 * 1024 * 1024)) + 1024;
@@ -1032,6 +1037,73 @@ void test_huff()
         delete[] dst;
         delete[] src;
     }
+}
+#endif
+
+#ifdef USE_FSE
+void run_fse(const char* filepath)
+{
+    Timer timer;
+    double deflateTime, inflateTime;
+
+    std::ifstream file(filepath, std::ios::binary);
+    if(!file.is_open()) {
+        return;
+    }
+    file.seekg(0, std::ios::end);
+    uint32_t size = static_cast<uint32_t>(file.tellg());
+    file.seekg(0, std::ios::beg);
+
+    uint8_t* src = new uint8_t[size];
+    file.read(reinterpret_cast<char*>(src), size);
+    file.close();
+
+    uint8_t* dst = new uint8_t[size];
+
+    size_t compressedSize = FSE_compressBound(size);
+     uint8_t* compressed = new uint8_t[compressedSize];
+
+    timer.start();
+    size_t result = FSE_compress(compressed, compressedSize, src, size);
+    if(result <= 0) {
+        printf("Error in def_fse\n");
+        delete[] compressed;
+        delete[] dst;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    deflateTime = timer.seconds();
+
+    timer.start();
+    size_t decompressed = FSE_decompress(dst, size, compressed, result);
+    if(decompressed <= 0) {
+        printf("Error in inf_fse\n");
+        delete[] compressed;
+        delete[] dst;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    inflateTime = timer.seconds();
+
+    for(int i = 0; i < size; ++i) {
+        if(src[i] != dst[i]) {
+            printf("Error: %d != %d\n", src[i], dst[i]);
+            delete[] compressed;
+            delete[] dst;
+            delete[] src;
+            return;
+        }
+    }
+    double ratio = (double)size / result;
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    print(filepath, ratio, deflateSpeed, inflateSpeed);
+    delete[] compressed;
+    delete[] dst;
+    delete[] src;
 }
 #endif
 
@@ -1272,10 +1344,10 @@ void run_lz4(const char* filepath)
         return;
     }
     file.seekg(0, std::ios::end);
-    cpprcoder::u32 size = static_cast<cpprcoder::u32>(file.tellg());
+    uint32_t size = static_cast<uint32_t>(file.tellg());
     file.seekg(0, std::ios::beg);
 
-    cpprcoder::u8* src = new cpprcoder::u8[size];
+    uint8_t* src = new uint8_t[size];
     file.read(reinterpret_cast<char*>(src), size);
     file.close();
 
@@ -1319,7 +1391,7 @@ void run_lz4_huff(const char* filepath)
         return;
     }
     file.seekg(0, std::ios::end);
-    cpprcoder::u32 size = static_cast<cpprcoder::u32>(file.tellg());
+    uint32_t size = static_cast<uint32_t>(file.tellg());
     file.seekg(0, std::ios::beg);
 
     cpprcoder::u8* src = new cpprcoder::u8[size];
@@ -1327,35 +1399,41 @@ void run_lz4_huff(const char* filepath)
     file.close();
 
     int32_t lz4Bound = LZ4_compressBound(size);
-    size_t hufBound = HUF_compressBlocksBound((size_t)lz4Bound);
-    uint8_t* dst = new uint8_t[lz4Bound];
+    uint32_t hufBound = HUF_compressBlocksBound((uint32_t)lz4Bound);
+    uint8_t* dst = new uint8_t[size];
+    uint8_t* compressed = new uint8_t[lz4Bound];
+    uint8_t* compressed2 = new uint8_t[hufBound];
     uint8_t* uncompressed = new uint8_t[hufBound];
 
     timer.start();
     int32_t r;
-    r = LZ4_compress_HC((const char*)src, (char*)dst, (int32_t)size, lz4Bound, 9);
+    r = LZ4_compress_HC((const char*)src, (char*)compressed, (int32_t)size, lz4Bound, 9);
     if(r <= 0) {
-        delete[] dst;
-        delete[] src;
-        return;
-    }
-    size_t compressedSize = HUF_compressBlocksBound((size_t)r);
-    uint8_t* compressed = new uint8_t[compressedSize];
-
-    size_t r2 = (int32_t)HUF_compressBlocks(compressed, compressedSize, dst, (size_t)r);
-    timer.stop();
-    deflateTime = timer.seconds();
-    if(r <= 0) {
+        delete[] uncompressed;
+        delete[] compressed2;
         delete[] compressed;
         delete[] dst;
         delete[] src;
         return;
     }
+    uint32_t r2 = (int32_t)HUF_compressBlocks(compressed2, hufBound, compressed, (uint32_t)r);
+    if(r2 <= 0) {
+        delete[] uncompressed;
+        delete[] compressed2;
+        delete[] compressed;
+        delete[] dst;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    deflateTime = timer.seconds();
 
     timer.start();
-    HUF_decompressBlocks(uncompressed, (size_t)r, compressed, r2);
-    r = LZ4_decompress_safe((const char*)compressed, (char*)uncompressed, r, size);
+    r = (int32_t)HUF_decompressBlocks(uncompressed, (uint32_t)r, compressed2, r2);
+    r = LZ4_decompress_safe((const char*)uncompressed, (char*)dst, r, size);
     if(r <= 0) {
+        delete[] uncompressed;
+        delete[] compressed2;
         delete[] compressed;
         delete[] dst;
         delete[] src;
@@ -1363,17 +1441,101 @@ void run_lz4_huff(const char* filepath)
     }
     timer.stop();
     inflateTime = timer.seconds();
+    for(uint32_t i = 0; i < size; ++i) {
+        assert(dst[i] == src[i]);
+    }
 
     double ratio = (double)size / r2;
     double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
     double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
     // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
     print(filepath, ratio, deflateSpeed, inflateSpeed);
+    delete[] uncompressed;
+    delete[] compressed2;
     delete[] compressed;
     delete[] dst;
     delete[] src;
 }
 #    endif
+
+#    ifdef USE_FSE
+void run_lz4_fse(const char* filepath)
+{
+    Timer timer;
+    double deflateTime, inflateTime;
+
+    std::ifstream file(filepath, std::ios::binary);
+    if(!file.is_open()) {
+        return;
+    }
+    file.seekg(0, std::ios::end);
+    uint32_t size = static_cast<uint32_t>(file.tellg());
+    file.seekg(0, std::ios::beg);
+
+    cpprcoder::u8* src = new cpprcoder::u8[size];
+    file.read(reinterpret_cast<char*>(src), size);
+    file.close();
+
+    int32_t lz4Bound = LZ4_compressBound(size);
+    size_t hufBound = FSE_compressBound((size_t)lz4Bound);
+    uint8_t* dst = new uint8_t[size];
+    uint8_t* compressed = new uint8_t[lz4Bound];
+    uint8_t* compressed2 = new uint8_t[hufBound];
+    uint8_t* uncompressed = new uint8_t[hufBound];
+
+    timer.start();
+    int32_t r;
+    r = LZ4_compress_HC((const char*)src, (char*)compressed, (int32_t)size, lz4Bound, 9);
+    if(r <= 0) {
+        delete[] uncompressed;
+        delete[] compressed2;
+        delete[] compressed;
+        delete[] dst;
+        delete[] src;
+        return;
+    }
+    size_t r2 = FSE_compress(compressed2, hufBound, compressed, (size_t)r);
+    if(r2 <= 0) {
+        delete[] uncompressed;
+        delete[] compressed2;
+        delete[] compressed;
+        delete[] dst;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    deflateTime = timer.seconds();
+
+    timer.start();
+    r = (int32_t)FSE_decompress(uncompressed, (size_t)r, compressed2, r2);
+    r = LZ4_decompress_safe((const char*)uncompressed, (char*)dst, r, size);
+    if(r <= 0) {
+        delete[] uncompressed;
+        delete[] compressed2;
+        delete[] compressed;
+        delete[] dst;
+        delete[] src;
+        return;
+    }
+    timer.stop();
+    inflateTime = timer.seconds();
+    for(uint32_t i = 0; i < size; ++i) {
+        assert(dst[i] == src[i]);
+    }
+
+    double ratio = (double)size / r2;
+    double deflateSpeed = size / deflateTime / (1024.0 * 1024.0);
+    double inflateSpeed = size / inflateTime / (1024.0 * 1024.0);
+    // printf("|%s|%d|%d|%f|%lld|%lld|\n", filepath, size, encstream.size(), ratio, deflateTime, inflateTime);
+    print(filepath, ratio, deflateSpeed, inflateSpeed);
+    delete[] uncompressed;
+    delete[] compressed2;
+    delete[] compressed;
+    delete[] dst;
+    delete[] src;
+}
+#    endif
+
 #endif
 
 #ifdef USE_RC
@@ -1558,8 +1720,16 @@ int main(int /*argc*/, char** /*argv*/)
     for(int i = 0; i < numFiles; ++i) {
         run_huff(files[i]);
     }
-    test_huff();
 #endif
+
+    #ifdef USE_FSE
+    printf("FSE\n");
+    printf("-------------------------------------------\n");
+    print_header();
+    for(int i = 0; i < numFiles; ++i) {
+        run_fse(files[i]);
+    }
+    #endif
 
 #ifdef USE_ZLIB
     printf("ZLib\n");
@@ -1602,13 +1772,21 @@ int main(int /*argc*/, char** /*argv*/)
     for(int i = 0; i < numFiles; ++i) {
         run_lz4(files[i]);
     }
-//#    ifdef USE_HUFF
-#if 0
+#    ifdef USE_HUFF
     printf("LZ4 Huff\n");
     printf("-------------------------------------------\n");
     print_header();
     for(int i = 0; i < numFiles; ++i) {
         run_lz4_huff(files[i]);
+    }
+#endif
+
+#ifdef USE_FSE
+    printf("LZ4 FSE\n");
+    printf("-------------------------------------------\n");
+    print_header();
+    for(int i=0; i<numFiles; ++i){
+        run_lz4_fse(files[i]);
     }
 #    endif
 #endif
